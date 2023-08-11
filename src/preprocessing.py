@@ -1,5 +1,4 @@
 import os
-import copy
 
 import numpy as np
 import rasterio
@@ -17,7 +16,7 @@ class crop_features:
         new object of the class
     """
 
-    def __init__(self, left, top, right, bottom, width, height):
+    def __init__(self, left, top, right, bottom, path_to_cropmask):
         p1 = geometry.Point(left, bottom)
         p2 = geometry.Point(left, top)
         p3 = geometry.Point(right, top)
@@ -25,14 +24,15 @@ class crop_features:
 
         pointList = [p1, p2, p3, p4]
         self.poly = geometry.Polygon([i for i in pointList])
+        
+        # Read the cropmask file
+        with rasterio.open(path_to_cropmask) as src:
+            cropped_image, cropped_transform = rasterio.mask.mask(src, [self.poly], crop=True)
 
-        bbox_size = (height, width)
-        bbox = [left, bottom, right, top]
-        self.transform = rasterio.transform.from_bounds(  # type: ignore
-            *bbox, width=bbox_size[1], height=bbox_size[0]
-        )
-        self.height = height
-        self.width = width
+        # Get the height and width of the cropped TIFF image
+        self.height = cropped_image.shape[1]
+        self.width = cropped_image.shape[2]
+        self.transform = cropped_transform
 
 
 def average_10years_climate(path_climate, path_new, years, months, folders, name_str):
@@ -301,7 +301,7 @@ def crop_tiff(path_src, path_dest, bound):
 
     # Apply those parameters for transformation
     for fname in tqdm(files):
-        filepath = path_src + fname
+        filepath = os.path.join(path_src, fname)
 
         with rasterio.open(filepath) as src:
             out_image, out_transform = rasterio.mask.mask(src, [bound.poly], crop=True)
@@ -378,19 +378,6 @@ def rename_climate(path, ssps):
     from_files = os.listdir(path)
 
     # Corresponding names
-    to_ = [
-        "fy",
-        "tp",
-        "pr_p95",
-        "sfcWindmax",
-        "snw",
-        "12m_SPI",
-        "monT0ud",
-        "tasmax",
-        "tasmin",
-        "t2m",
-        "monTstep6",
-    ]
     from_ = [
         "fy",
         "tp",
@@ -403,6 +390,19 @@ def rename_climate(path, ssps):
         "tasmin",
         "t2m",
         "step",
+    ]
+    to_ = [
+        "nesterov_gt_4000_days",
+        "monthly_precip",
+        "precip_ext_days",
+        "windmax_ext_days",
+        "snow_moisture",
+        "std_precip_index",
+        "air_temp_cross_0C_days",
+        "tempmax_ext_days",
+        "tempmin_ext_days",
+        "monthly_avg_temp",
+        "daily_temp_gt_6C_days",
     ]
 
     for file in from_files:
@@ -441,3 +441,24 @@ def rename_climate(path, ssps):
                 substr not in file for substr in ["CMCC", "CNRM", "MRI"]
             ):
                 os.rename(path + file, path + to_[index] + ".tif")  # type: ignore
+
+def rename_elevation(path):
+    """Renames bands in .tiffs and renames the DEM_1km.tif file to altitude.tif
+
+    Parameters:
+    --------
+        path: str
+            Source folder path
+
+    Returns:
+    --------
+        None
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Path '{path}' does not exist.")
+
+    # Rename DEM_1km.tif to altitude.tif if it exists
+    dem_file_path = os.path.join(path, 'DEM_1km.tif')
+    if os.path.exists(dem_file_path):
+        altitude_file_path = os.path.join(path, 'altitude.tif')
+        os.rename(dem_file_path, altitude_file_path)

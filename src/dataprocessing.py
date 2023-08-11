@@ -1,4 +1,5 @@
 import glob
+import re
 import os
 import pickle
 from pathlib import Path
@@ -35,7 +36,6 @@ def dataset_to_np(
     y_off: int,
     xsize: int,
     ysize: int,
-    verbose: bool = False,
 ):
     """
     Converts gdal.Dataset to numpy array
@@ -50,22 +50,17 @@ def dataset_to_np(
       np.ndarray -- 3d tensor of information given in dataset
     """
 
-    shape = [dataset.RasterCount, ysize, xsize]
+    shape = [dataset.RasterCount, ysize, xsize]  # +2 for latitude and longitude
     output = np.empty(shape)
-    if verbose:
-        for r_idx in range(shape[0]):
-            band = dataset.GetRasterBand(r_idx + 1)
-            arr = band.ReadAsArray(x_off, y_off, xsize, ysize)
-            output[r_idx, :, :] = np.array(arr)
-    else:
-        for r_idx in range(shape[0]):
-            band = dataset.GetRasterBand(r_idx + 1)
-            arr = band.ReadAsArray(x_off, y_off, xsize, ysize)
-            output[r_idx, :, :] = np.array(arr)
+    for r_idx in range(shape[0]):
+        band = dataset.GetRasterBand(r_idx + 1)
+        arr = band.ReadAsArray(x_off, y_off, xsize, ysize)
+        output[r_idx, :, :] = np.array(arr)
+
     return output
 
 
-def get_nps_(file_path, verbose=False):  # IGRAN PROJECT
+def get_nps_(file_path):  # IGRAN PROJECT
     # open gdal files
     dsets = {}
     for i in file_path:
@@ -80,9 +75,23 @@ def get_nps_(file_path, verbose=False):  # IGRAN PROJECT
             y_off=0,
             xsize=dsets[fn].RasterXSize,
             ysize=dsets[fn].RasterYSize,
-            verbose=verbose,
         )
         nps[fn] = np_tmp
+
+    # Add latitude and longitude as new bands
+    geotransform = dset.GetGeoTransform()
+    x_origin, x_pixel_width, _, y_origin, _, y_pixel_height = geotransform
+    x_coords = x_origin + np.arange(dset.RasterXSize) * x_pixel_width
+    y_coords = (
+        y_origin
+        + np.arange(
+            dset.RasterYSize,
+        )
+        * y_pixel_height
+    )
+    x_coords, y_coords = np.meshgrid(x_coords, y_coords)
+    nps["latitude"] = y_coords
+    nps["longitude"] = x_coords
 
     return nps
 
@@ -177,6 +186,9 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
         # Define file paths:
         file_path = glob.glob(os.path.join(path_to_raw_data[key], "*.tif"))
 
+        if not os.path.exists(path_to_processed_data_folder):
+            os.makedirs(path_to_processed_data_folder)
+
         # Features averaged
         with open(
             os.path.join(path_to_processed_data_folder, "features_" + key + ".npy"),
@@ -189,20 +201,16 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
             # Monthly data
             for key in data.keys():
                 if key in [
-                    "fy",
-                    "pr",
-                    "pr_p95",
-                    "sfcWindmax",
-                    "snw",
-                    "t0ud",
-                    "tas",
-                    "tasmax",
-                    "tasmin",
-                    "Tstep6",
-                    "tp",
-                    "t2m",
-                    "monT0ud",
-                    "monTstep6",
+                    "nesterov_gt_4000_days",
+                    "monthly_precip",
+                    "precip_ext_days",
+                    "windmax_ext_days",
+                    "snow_moisture",
+                    "air_temp_cross_0C_days",
+                    "tempmax_ext_days",
+                    "tempmin_ext_days",
+                    "monthly_avg_temp",
+                    "daily_temp_gt_6C_days",
                 ]:
                     # define time period in months
                     for i in range(12):
@@ -211,14 +219,31 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
                         ).reshape(-1)
                 # Morphological data
                 elif key in ["morf_3", "morf_11", "morf_33", "morf_47"]:
+                    # Band names mapping
+                    band_names = {
+                        "1": "slope",
+                        "2": "aspect",
+                        "3": "shaded_relief_east",
+                        "4": "profile_convexity",
+                        "5": "plan_convexity",
+                        "6": "long_curvature",
+                        "7": "cross_convexity",
+                        "8": "min_curvature",
+                        "9": "max_curvature",
+                        "10": "shaded_relief_south",
+                    }
                     for i in range(1, 11):
-                        Features_dict[str(key) + "_" + str(i)] = np.stack(
-                            [v for v in list(data[key][i - 1, :, :])]
-                        ).reshape(-1)
+                        Features_dict[
+                            band_names[str(i)]
+                            + "_"
+                            + str(int(re.search(r"\d+", key).group()))
+                        ] = np.stack([v for v in list(data[key][i - 1, :, :])]).reshape(
+                            -1
+                        )
                 # Relief and SPI data
-                elif key in ["DEM_1km", "12m_SPI"]:
+                elif key in ["altitude", "std_precip_index", "latitude", "longitude"]:
                     Features_dict[str(key)] = np.stack(
-                        [v for v in list(data[key][0, :, :])]
+                        [v for v in list(data[key].squeeze())]
                     ).reshape(-1)
 
             pickle.dump(Features_dict, f, protocol=4)

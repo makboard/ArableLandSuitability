@@ -22,6 +22,7 @@ from sklearn.metrics import (classification_report, confusion_matrix,
                              roc_auc_score)
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
 
 
 def roc_auc_score_multiclass(actual_class, prob, le=None):
@@ -542,7 +543,7 @@ class Crop_LSTM(nn.Module):
         out = out[:, -1, :]
         out = self.act(self.linearLayer1(out))
         out = self.linearLayer2(out)
-        return out
+        return F.log_softmax(out, dim=1)
 
 
 class CroplandDataModule_MLP(pl.LightningDataModule):
@@ -648,7 +649,7 @@ class Crop_MLP(nn.Module):
         )
 
     def forward(self, X) -> torch.Tensor:
-        output = self.net(X)
+        output = F.log_softmax(self.net(X),dim=1)
         return output
 
 
@@ -671,10 +672,14 @@ class Crop_PL(pl.LightningModule):
         self,
         net: torch.nn.Module,
         num_classes=4,
+        lr=1e-3,
+        weight_decay=0.03,
     ):
         super().__init__()
         self.save_hyperparameters(logger=False, ignore=["net"])
         self.net = net
+        self.lr = lr
+        self.weight_decay = weight_decay
         self.softmax = nn.Softmax()
         self.criterion = nn.CrossEntropyLoss()
 
@@ -834,7 +839,7 @@ class Crop_PL(pl.LightningModule):
         return {"loss": loss, "preds": predictions, "target": target}
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3, weight_decay=3e-3)
+        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
         if scheduler is not None:
             scheduler = scheduler(
