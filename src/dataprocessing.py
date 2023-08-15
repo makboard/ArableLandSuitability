@@ -2,6 +2,7 @@ import glob
 import re
 import os
 import pickle
+import random
 from pathlib import Path
 
 import numpy as np
@@ -266,3 +267,96 @@ def check_dimensions(path_to_features, path_to_target):
         print("Error: Dimensions incompatible.")
     else:
         print("Ok!")
+
+
+def generate_subsets(
+    blocks: list,
+    empty: dict,
+    max_iterations: int,
+    class_counts: list,
+    options: list,
+    options_distr: list,
+    train_portion: float,
+    val_test_portion: float,
+):
+    """
+    Generate subsets of data blocks based on given criteria.
+
+    Args:
+        blocks (list): List of data blocks.
+        empty (dict): Empty dictionary with keys representing classes and values representing counts.
+        max_iterations (int): Maximum number of iterations.
+        class_counts (list): List of class counts for each class.
+        options (list): List of subsets to generate.
+        options_distr (list): List of dictionaries representing class distributions in options.
+        train_portion (float): Portion of data for training.
+        val_test_portion (float): Portion of data for validation and testing.
+
+    Returns:
+        tuple: A tuple containing updated options, options_distr, and remaining blocks.
+    """
+    iteration = 0
+
+    while blocks and iteration < max_iterations:
+        random_element = blocks.pop(random.randint(0, len(blocks) - 1))
+
+        # Calculate class distribution for the current block
+        block_distr = {
+            value: count
+            for value, count in zip(
+                *np.unique(random_element[1].flatten(), return_counts=True)
+            )
+        }
+        block_distr = {key: block_distr.get(key, 0) for key in [0, 1, 2, 3]}
+
+        # Add empty class counts to the distribution
+        for key, value in empty.items():
+            block_distr[key] += value
+
+        indexes = list(range(len(options)))
+        random.shuffle(indexes)
+
+        for j in range(len(indexes)):
+            # Check if adding the block to the subset violates class distribution constraints
+            if not any(
+                options_distr[indexes[j]][i] + block_distr[i]
+                > class_counts[i]
+                * (train_portion if indexes[j] == 0 else val_test_portion)
+                for i in range(len(class_counts))
+            ):
+                options[indexes[j]].append(random_element)
+
+                # Update class distribution for the selected option
+                for key, value in block_distr.items():
+                    options_distr[indexes[j]][key] += value
+                break
+        else:
+            blocks.append(random_element)
+
+        iteration += 1
+
+    return options, options_distr, blocks
+
+
+def generate_blocks(data, block_size=(200, 200)):
+    """
+    Generate blocks from the given data matrix.
+
+    Args:
+        data (numpy.ndarray): Input data matrix.
+        block_size (tuple): Size of each block in (rows, columns).
+
+    Returns:
+        list: List of blocks generated from the data matrix.
+    """
+    blocks = []
+    n_rows, n_cols = data.shape[:2]
+    block_rows, block_cols = block_size
+
+    for i in range(0, n_rows, block_rows):
+        for j in range(0, n_cols, block_cols):
+            # Ensure that the block has the specified size
+            block = data[i : i + block_rows, j : j + block_cols]
+            blocks.append(block)
+
+    return blocks

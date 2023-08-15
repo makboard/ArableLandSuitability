@@ -6,8 +6,12 @@ import numpy as np
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.metrics import (average_precision_score, precision_recall_curve,
-                             roc_auc_score, roc_curve)
+from sklearn.metrics import (
+    average_precision_score,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
+)
 from sklearn.preprocessing import label_binarize
 
 warnings.filterwarnings("ignore")
@@ -18,8 +22,7 @@ import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torchmetrics
-from sklearn.metrics import (classification_report, confusion_matrix,
-                             roc_auc_score)
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
@@ -101,7 +104,7 @@ def downsample(X, y, oversampling=False):
     # Define over- and undersampling strategies
     over = SMOTE(random_state=42, n_jobs=-1)
     under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]}, # type: ignore
+        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  # type: ignore
         random_state=42,
     )
 
@@ -162,14 +165,22 @@ def reshape_data(X):
     Returns:
         ndarray: Modified dataset
     """
-
+    non_sueqence_features = [
+        "altitude",
+        "_3",
+        "_11",
+        "_47",
+        "std_precip_index",
+        "latitude",
+        "longitude",
+    ]
     # Create list of monthly features
     list_of_monthly_features = [
-        x for x in X.keys() if not any(elem in x for elem in ["DEM", "morf", "12m_SPI"])
+        x for x in X.keys() if not any(elem in x for elem in non_sueqence_features)
     ]
     # Create list of static features
     list_of_static_features = [
-        x for x in X.keys() if any(elem in x for elem in ["DEM", "morf", "12m_SPI"])
+        x for x in X.keys() if any(elem in x for elem in non_sueqence_features)
     ]
     # Create separate DataFrames for monthly and static features
     X_monthly = X.drop(columns=list_of_static_features)
@@ -195,7 +206,8 @@ def reshape_data(X):
 
 def calculate_tpr_fpr(y_real, y_pred):
     """
-    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr) based on real and predicted observations
+    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr) 
+            based on real and predicted observations
 
     Args:
         y_real: The list or series with the real classes
@@ -222,11 +234,13 @@ def calculate_tpr_fpr(y_real, y_pred):
 
 def get_all_roc_coordinates(y_real, y_proba):
     """
-    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point as a threshold for the predicion of the class.
+    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point 
+        as a threshold for the predicion of the class.
 
     Args:
         y_real: The list or series with the real classes.
-        y_proba: The array with the probabilities for each class, obtained by using the `.predict_proba()` method.
+        y_proba: The array with the probabilities for each class, 
+            obtained by using the `.predict_proba()` method.
 
     Returns:
         tpr_list: The list of TPRs representing each threshold.
@@ -649,7 +663,7 @@ class Crop_MLP(nn.Module):
         )
 
     def forward(self, X) -> torch.Tensor:
-        output = F.log_softmax(self.net(X),dim=1)
+        output = F.log_softmax(self.net(X), dim=1)
         return output
 
 
@@ -839,7 +853,9 @@ class Crop_PL(pl.LightningModule):
         return {"loss": loss, "preds": predictions, "target": target}
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        optimizer = torch.optim.Adam(
+            self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay
+        )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
         if scheduler is not None:
             scheduler = scheduler(
