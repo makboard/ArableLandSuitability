@@ -3,17 +3,6 @@ jupyter
 xarray
 fastparquet
 pyarrow
-dask
-python-docx
-black
-imblearn
-seaborn
-captum
-sklearn-evaluation
-xgboost
-lightgbm
-rasterio
-descartes
 beautifulsoup4==4.11.1
 debugpy==1.5.1
 geographiclib==1.52
