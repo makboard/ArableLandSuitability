@@ -24,6 +24,7 @@ import torch
 import torchmetrics
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from torch import nn
+from torch.utils.data.sampler import WeightedRandomSampler
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
 
@@ -558,6 +559,19 @@ class Crop_LSTM(nn.Module):
         out = self.act(self.linearLayer1(out))
         out = self.linearLayer2(out)
         return F.log_softmax(out, dim=1)
+    
+class CustomWeightedRandomSampler(WeightedRandomSampler):
+    """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __iter__(self):
+        rand_tensor = np.random.choice(range(0, len(self.weights)),
+                                       size=self.num_samples,
+                                       p=self.weights.numpy() / torch.sum(self.weights).numpy(),
+                                       replace=self.replacement)
+        rand_tensor = torch.from_numpy(rand_tensor)
+        return iter(rand_tensor.tolist())
 
 
 class CroplandDataModule_MLP(pl.LightningDataModule):
@@ -593,7 +607,7 @@ class CroplandDataModule_MLP(pl.LightningDataModule):
         loss_weights = class_weights / class_weights.sum()
         ds = self.y_train.argmax(dim=1)
         weights = [loss_weights[i] for i in ds]
-        self.sampler = torch.utils.data.sampler.WeightedRandomSampler(
+        self.sampler = CustomWeightedRandomSampler(
             weights, num_samples=len(weights), replacement=True
         )
 
@@ -624,7 +638,7 @@ class Crop_MLP(nn.Module):
     A multi-layer perceptron (MLP) used for crop classification.
 
     Args:
-        input_size (int): The number of input features (default: 162).
+        input_size (int): The number of input features (default: 164).
         output_size (int): The number of output logits (default: 4).
 
     Inputs:
@@ -634,7 +648,7 @@ class Crop_MLP(nn.Module):
         torch.Tensor: A tensor of shape (batch_size, output_size) containing the output logits.
     """
 
-    def __init__(self, input_size=162, output_size=4) -> None:
+    def __init__(self, input_size=164, output_size=4) -> None:
         super(Crop_MLP, self).__init__()
 
         self.net = nn.Sequential(
@@ -662,9 +676,24 @@ class Crop_MLP(nn.Module):
             nn.Linear(input_size // 8, output_size),
         )
 
+    def initialize_bias_weights(self, y_train):
+        """
+        Initialize the bias weights of the final linear layer based on the class distribution.
+
+        Args:
+            y_train (torch.Tensor): A tensor of shape (num_samples,) containing the target labels.
+        """
+        _, class_counts = torch.unique(y_train, return_counts=True)
+        total_samples = len(y_train)
+        class_distribution = class_counts.float() / total_samples
+
+        # Initialize bias weights for the final linear layer
+        bias_weights = -torch.log(class_distribution)
+        self.net[-1].bias.data = bias_weights
+
     def forward(self, X) -> torch.Tensor:
-        output = F.log_softmax(self.net(X), dim=1)
-        return output
+        output = self.net(X)
+        return F.log_softmax(output, dim=1)
 
 
 class Crop_PL(pl.LightningModule):
@@ -701,7 +730,8 @@ class Crop_PL(pl.LightningModule):
         self.val_loss = torchmetrics.MeanMetric()
         self.test_loss = torchmetrics.MeanMetric()
         self.val_F1Score_best = torchmetrics.MaxMetric()
-
+        self.validation_step_outputs = []
+        
         self.train_accuracy = torchmetrics.Accuracy(
             task="multiclass", num_classes=num_classes, top_k=1
         )
@@ -819,13 +849,14 @@ class Crop_PL(pl.LightningModule):
             "val/F1Score", self.val_F1Score, on_step=False, on_epoch=True, prog_bar=True
         )
         self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
+        self.validation_step_outputs.append(self.val_F1Score(predictions, target))
 
         return {"loss": loss, "preds": predictions, "target": target}
 
-    def validation_epoch_end(self, outputs):
-        F1Score = self.val_F1Score.compute()
-        self.val_F1Score_best(F1Score)
-        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False)
+    def on_validation_epoch_end(self): 
+        epoch_average = torch.stack(self.validation_step_outputs).mean() 
+        self.log("val/F1Score_best", epoch_average, prog_bar=False)
+        self.validation_step_outputs.clear()
 
     def test_step(self, batch, batch_idx):
         loss, predictions, target = self.model_step(batch)
@@ -865,7 +896,7 @@ class Crop_PL(pl.LightningModule):
                 factor=0.5,
                 verbose=True,
                 min_lr=1e-8,
-                threshold=5e-4,
+                threshold=1e-3,
             )
             return {
                 "optimizer": optimizer,
