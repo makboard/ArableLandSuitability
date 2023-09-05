@@ -6,6 +6,7 @@ import numpy as np
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
+from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import (
     average_precision_score,
     precision_recall_curve,
@@ -82,15 +83,15 @@ def get_unique_values(data):
     return values
 
 
-def downsample(X, y, oversampling=False):
+def downsample(X, y, oversampling=False, oversampling_strategy='ROS'):
     """Downsample the most frequent class to the second frequent one
     and optionally oversample the rest classes
     Downsampling is performed by RandomUnderSampler
-    Oversampling is performed by SMOTE
+    Oversampling is performed by SMOTE or RandomOverSampler
     Args:
         X (DataFrame or ArrayLike): Initial features
         y (DataFrame or ArrayLike): Initial target variable
-        oversampling (bool, optional): If True, oversampling is preformed
+        oversampling (bool, optional): If True, oversampling is performed
         for the rest classes. Defaults to False.
 
     Returns:
@@ -103,20 +104,26 @@ def downsample(X, y, oversampling=False):
     print(counter.most_common())
 
     # Define over- and undersampling strategies
-    over = SMOTE(random_state=42, n_jobs=-1)
+    overSMOTE = SMOTE(random_state=42, n_jobs=-1)
+    overROS =  RandomOverSampler(random_state=42)
     under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  # type: ignore
+        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  
         random_state=42,
     )
 
     # Define pipeline steps
     if oversampling:
-        steps = [("u", under), ("o", over)]
+        if oversampling_strategy == 'ROS':
+            steps = [("u", under), ("o", overROS)]
+        elif oversampling_strategy == 'SMOTE':
+            steps = [("u", under), ("o", overSMOTE)]
+        else:
+            raise ValueError("Not implemented oversampling strategy!")
     else:
         steps = [("u", under)]
     pipeline = Pipeline(steps=steps)
 
-    # transform the dataset
+    # Transform the dataset
     X, y = pipeline.fit_resample(X, y)
 
     # Print final distribution
@@ -184,25 +191,14 @@ def reshape_data(X):
         x for x in X.keys() if any(elem in x for elem in non_sueqence_features)
     ]
     # Create separate DataFrames for monthly and static features
-    X_monthly = X.drop(columns=list_of_static_features)
-    X_static = X.drop(columns=list_of_monthly_features)
+    X_monthly = X[list_of_monthly_features]
+    X_static = X[list_of_static_features].to_numpy()
     # Reshape monthly features
-    X_tmp = X_monthly.to_numpy().reshape(
+    X_monthly = X_monthly.to_numpy().reshape(
         X_monthly.shape[0], len(list_of_monthly_features) // 12, 12
     )
-    # Create an empty output ndarray
-    X_new = np.empty(
-        (
-            X_monthly.shape[0],
-            12,
-            len(list_of_monthly_features) // 12 + len(list_of_static_features),
-        )
-    )
-    # Fill the output ndarray.
-    for i in range(12):
-        X_new[:, i, :] = np.concatenate([X_tmp[:, :, i], X_static.to_numpy()], axis=1)
 
-    return X_new
+    return X_monthly, X_static, list_of_monthly_features, list_of_static_features
 
 
 def calculate_tpr_fpr(y_real, y_pred):
