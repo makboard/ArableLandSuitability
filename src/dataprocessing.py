@@ -316,7 +316,7 @@ def generate_subsets(
         indexes = list(range(len(options)))
         random.shuffle(indexes)
 
-        for j in range(len(indexes)):
+        for j, _ in enumerate(indexes):
             # Check if adding the block to the subset violates class distribution constraints
             if not any(
                 options_distr[indexes[j]][i] + block_distr[i]
