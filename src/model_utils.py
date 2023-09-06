@@ -1,8 +1,10 @@
+from unicodedata import bidirectional
 import warnings
 from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
@@ -26,7 +28,7 @@ import torchmetrics
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from torch import nn
 from torch.utils.data.sampler import WeightedRandomSampler
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 import torch.nn.functional as F
 
 
@@ -161,7 +163,7 @@ def drop_classes(X, y, classes_to_drop: list):
 
 
 def reshape_data(X):
-    """Prepare dataset in shape (N, num_of_monthly + num_of_static, 12)
+    """Prepare dataset in shape (N, 12, num_of_monthly), (N, num_of_static)
     N - number of samples
     num_of_monthly - number of monthly features
     num_of_static - number of static features
@@ -195,8 +197,8 @@ def reshape_data(X):
     X_static = X[list_of_static_features].to_numpy()
     # Reshape monthly features
     X_monthly = X_monthly.to_numpy().reshape(
-        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12
-    )
+        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12)
+    X_monthly = np.transpose(X_monthly, (0, 2, 1)) # samples, sequence, features
 
     return X_monthly, X_static, list_of_monthly_features, list_of_static_features
 
@@ -413,11 +415,23 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
         i += 1
         print(f"{k} ROC AUC OvO: {roc_auc_ovo[k]:.4f}")
     print(f"average ROC AUC OvO: {avg_roc_auc/i:.4f}")
-
-    plt.tight_layout()
-    plt.show()
     # -----------------------------------------------------
 
+class CroplandDataset(Dataset):
+    def __init__(self, X, y):
+        self.X_monthly = X[0]  
+        self.X_static = X[1] 
+        self.y = y 
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        x_monthly = self.X_monthly[idx]
+        x_static = self.X_static[idx]
+        target = self.y[idx]
+        
+        return (x_monthly, x_static), target
 
 class CroplandDataModule_LSTM(pl.LightningDataModule):
     """
@@ -432,10 +446,15 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
     def __init__(self, X: dict, y: dict, batch_size: int = 128):
         super().__init__()
         self.batch_size = batch_size
-        self.X_train, self.X_val, self.X_test = (
-            torch.FloatTensor(X["Train"]),
-            torch.FloatTensor(X["Val"]),
-            torch.FloatTensor(X["Test"]),
+        self.X_monthly_train, self.X_monthly_val, self.X_monthly_test = (
+            torch.FloatTensor(X["Train"][0]),
+            torch.FloatTensor(X["Val"][0]),
+            torch.FloatTensor(X["Test"][0]),
+        )
+        self.X_static_train, self.X_static_val, self.X_static_test = (
+            torch.FloatTensor(X["Train"][1]),
+            torch.FloatTensor(X["Val"][1]),
+            torch.FloatTensor(X["Test"][1]),
         )
         self.y_train, self.y_val, self.y_test = (
             torch.LongTensor(y["Train"]),
@@ -447,11 +466,11 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.dataset_train = TensorDataset(self.X_train, self.y_train)
-            self.dataset_val = TensorDataset(self.X_val, self.y_val)
+            self.dataset_train = CroplandDataset((self.X_monthly_train, self.X_static_train), self.y_train)
+            self.dataset_val = CroplandDataset((self.X_monthly_val, self.X_static_val), self.y_val)
 
         if stage == "test" or stage is None:
-            self.dataset_test = TensorDataset(self.X_test, self.y_test)
+            self.dataset_test = CroplandDataset((self.X_monthly_test, self.X_static_test), self.y_test)
 
     def train_dataloader(self):
         return DataLoader(self.dataset_train, shuffle=True, **self.dl_dict)
@@ -461,9 +480,8 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.dataset_test, **self.dl_dict)
-
-
-class Crop_Transformer(nn.Module):
+    
+class CropTransformer(nn.Module):
     """
     A PyTorch module implementing a Crop Transformer classifier.
 
@@ -486,33 +504,46 @@ class Crop_Transformer(nn.Module):
 
     def __init__(
         self,
-        d_model=52,
-        nhead=13,
-        dim_feedforward=108,
-        dropout=0.1,
-        activation="relu",
+        d_model=10,
+        nhead=5,
+        dim_feedforward=128,
+        hidden_size=164,
+        num_layers=4,
+        dropout=0.2,
+        activation="gelu",
         output_size=4,
     ) -> None:
-        super(Crop_Transformer, self).__init__()
-        self.transformer_enc = nn.TransformerEncoderLayer(
+        super(CropTransformer, self).__init__()
+        
+        self.transformer_enc = nn.TransformerEncoder(nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation=activation,
             batch_first=True,
+        ), num_layers=num_layers)
+        
+        self.net = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LayerNorm(hidden_size // 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size // 2, output_size),
         )
-        self.linearLayer1 = nn.Linear(d_model, d_model)
-        self.linearLayer2 = nn.Linear(12 * d_model, output_size)
-        self.act = nn.ReLU()
+        
         self.flatten = nn.Flatten()
 
     def forward(self, X):
-        out = self.act(self.transformer_enc(X) + X)
-        out = self.act(self.linearLayer1(out) + out)
-        out = self.flatten(out)
-        out = self.linearLayer2(out)
-        return out
+        embedding = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
+        output = self.transformer_enc(embedding)
+        output = self.flatten(output)
+        output = self.net(torch.cat((output, X[1]), dim=1))
+        return F.log_softmax(output, dim=1)
 
 
 class Crop_LSTM(nn.Module):
@@ -529,7 +560,8 @@ class Crop_LSTM(nn.Module):
     output_size (int): The number of output logits (default: 4).
 
     Inputs:
-    X (torch.Tensor): A tensor of shape (batch_size, sequence_length, input_size) containing the input sequence.
+        X (tuple): X[0] is a tensor of shape (batch_size, sequence_length, input_size) containing the monthly input sequence.
+                    X[1] is a tensor of shape (batch_size, input_size) containing the static input sequence.
 
     Outputs:
     out (torch.Tensor): A tensor of shape (batch_size, output_size) containing the output logits.
@@ -538,28 +570,43 @@ class Crop_LSTM(nn.Module):
 
     def __init__(
         self,
-        input_size=52,
-        hidden_size=104,
-        num_layers=4,
+        input_size=10,
+        hidden_size_lstm=64,
+        hidden_size_mlp=172,
+        num_layers=2,
         output_size=4,
+        dropout=0.2,
     ) -> None:
         super(Crop_LSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.linearLayer1 = nn.Linear(hidden_size, hidden_size)
-        self.linearLayer2 = nn.Linear(hidden_size, output_size)
-        self.act = nn.ReLU()
-
+        self.lstm = nn.LSTM(input_size=input_size,
+                            hidden_size=hidden_size_lstm,
+                            num_layers=num_layers,
+                            batch_first=True,
+                            dropout=dropout,
+                            bidirectional=True
+                            )
+        self.net = nn.Sequential(
+            nn.Linear(hidden_size_mlp, hidden_size_mlp),
+            nn.BatchNorm1d(hidden_size_mlp),
+            nn.LeakyReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_size_mlp, hidden_size_mlp // 2),
+            nn.BatchNorm1d(hidden_size_mlp // 2),
+            nn.LeakyReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size_mlp // 2, output_size),
+        )
     def forward(self, X):
-        out, _ = self.lstm(X)
-        out = out[:, -1, :]
-        out = self.act(self.linearLayer1(out))
-        out = self.linearLayer2(out)
-        return F.log_softmax(out, dim=1)
+        input = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
+        output, _ = self.lstm(input)
+        output = output[:, -1, :]
+        output = self.net(torch.cat((output, X[1]), dim=1))
+        return F.log_softmax(output, dim=1)
     
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, weights, num_samples, replacement=True):
+        super().__init__(weights, num_samples, replacement=replacement)
 
     def __iter__(self):
         rand_tensor = np.random.choice(range(0, len(self.weights)),
@@ -572,8 +619,8 @@ class CustomWeightedRandomSampler(WeightedRandomSampler):
 
 class CroplandDataModule_MLP(pl.LightningDataModule):
     """
-    This module defines a LightningDataModule class for loading and preparing data for a Cropland classification model using MLP architecture.
-
+    This module defines a LightningDataModule class for loading and 
+        preparing data for a Cropland classification model using MLP architecture.
     Args:
     X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
     y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
@@ -618,7 +665,8 @@ class CroplandDataModule_MLP(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.dataset_train,
-            sampler=self.sampler,
+            shuffle=True,
+            # sampler=self.sampler,
             **self.dl_dict,
         )
 
@@ -632,14 +680,11 @@ class CroplandDataModule_MLP(pl.LightningDataModule):
 class Crop_MLP(nn.Module):
     """
     A multi-layer perceptron (MLP) used for crop classification.
-
     Args:
         input_size (int): The number of input features (default: 164).
         output_size (int): The number of output logits (default: 4).
-
     Inputs:
         X (torch.Tensor): A tensor of shape (batch_size, input_size) containing input data.
-
     Returns:
         torch.Tensor: A tensor of shape (batch_size, output_size) containing the output logits.
     """
@@ -648,25 +693,28 @@ class Crop_MLP(nn.Module):
         super(Crop_MLP, self).__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(input_size, 16 * input_size),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(16 * input_size),
-            nn.Linear(16 * input_size, 8 * input_size),
-            nn.LeakyReLU(),
+            nn.Linear(input_size, 8 * input_size),
             nn.BatchNorm1d(8 * input_size),
+            nn.LeakyReLU(),
+            nn.Dropout(0.7),
             nn.Linear(8 * input_size, 4 * input_size),
-            nn.LeakyReLU(),
             nn.BatchNorm1d(4 * input_size),
+            nn.LeakyReLU(),
+            nn.Dropout(0.5),
             nn.Linear(4 * input_size, 2 * input_size),
+            nn.BatchNorm1d(2 * input_size),
             nn.LeakyReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.5),
             nn.Linear(2 * input_size, input_size),
+            nn.BatchNorm1d(input_size),
             nn.LeakyReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(input_size, input_size // 2),
+            nn.BatchNorm1d(input_size // 2),
             nn.LeakyReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(input_size // 2, input_size // 8),
+            nn.BatchNorm1d(input_size // 8),
             nn.LeakyReLU(),
             nn.Dropout(0.1),
             nn.Linear(input_size // 8, output_size),
@@ -719,14 +767,11 @@ class Crop_PL(pl.LightningModule):
         self.net = net
         self.lr = lr
         self.weight_decay = weight_decay
-        self.softmax = nn.Softmax()
-        self.criterion = nn.CrossEntropyLoss()
 
         self.train_loss = torchmetrics.MeanMetric()
         self.val_loss = torchmetrics.MeanMetric()
         self.test_loss = torchmetrics.MeanMetric()
         self.val_F1Score_best = torchmetrics.MaxMetric()
-        self.validation_step_outputs = []
         
         self.train_accuracy = torchmetrics.Accuracy(
             task="multiclass", num_classes=num_classes, top_k=1
@@ -739,70 +784,60 @@ class Crop_PL(pl.LightningModule):
         )
 
         self.train_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.val_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes,  average="macro")
         self.test_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
 
         self.train_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.val_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.test_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
+            task="multiclass", num_classes=num_classes, average="macro"
         )
 
         self.train_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.val_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.test_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
 
         self.train_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.val_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
         self.test_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+            task="multiclass", num_classes=num_classes, average="macro")
 
     def forward(self, x):
         return self.net(x)
 
     def loss(self, y_hat, y):
-        return self.criterion(y_hat, y)
+        return F.cross_entropy(y_hat, y)
 
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams)
         self.val_F1Score_best.reset()
 
     def model_step(self, batch):
-        objs, target = batch
-        predictions = self(objs)
-        loss = self.loss(predictions, target.float())
-        return loss, self.softmax(predictions), torch.argmax(target, dim=1)
+        x, y = batch
+        logits = self.forward(x)
+        loss = F.cross_entropy(logits, y.float())
+        preds = F.softmax(logits, dim=1)
+        return loss, preds, torch.argmax(y, dim=1)
 
     def training_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
+        loss, preds, target = self.model_step(batch)
 
         self.train_loss(loss)
-        self.train_accuracy(predictions, target)
-        self.train_recall(predictions, target)
-        self.train_precision(predictions, target)
-        self.train_F1Score(predictions, target)
-        self.train_avg_precision(predictions, target)
+        self.train_accuracy(preds, target)
+        self.train_recall(preds, target)
+        self.train_precision(preds, target)
+        self.train_F1Score(preds, target)
+        self.train_avg_precision(preds, target)
 
         self.log(
             "train/loss",
@@ -825,17 +860,17 @@ class Crop_PL(pl.LightningModule):
         )
         self.log("train/AP", self.train_avg_precision, on_step=False, on_epoch=True)
 
-        return {"loss": loss, "preds": predictions, "target": target}
+        return {"loss": loss, "preds": preds, "target": target}
 
     def validation_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
+        loss, preds, target = self.model_step(batch)
 
         self.val_loss(loss)
-        self.val_accuracy(predictions, target)
-        self.val_recall(predictions, target)
-        self.val_precision(predictions, target)
-        self.val_F1Score(predictions, target)
-        self.val_avg_precision(predictions, target)
+        self.val_accuracy(preds, target)
+        self.val_recall(preds, target)    
+        self.val_precision(preds, target)
+        self.val_F1Score(preds, target)
+        self.val_avg_precision(preds, target)
 
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/accuracy", self.val_accuracy, on_step=False, on_epoch=True)
@@ -845,24 +880,23 @@ class Crop_PL(pl.LightningModule):
             "val/F1Score", self.val_F1Score, on_step=False, on_epoch=True, prog_bar=True
         )
         self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
-        self.validation_step_outputs.append(self.val_F1Score(predictions, target))
 
-        return {"loss": loss, "preds": predictions, "target": target}
+        return {"loss": loss, "preds": preds, "target": target}
 
     def on_validation_epoch_end(self): 
-        epoch_average = torch.stack(self.validation_step_outputs).mean() 
-        self.log("val/F1Score_best", epoch_average, prog_bar=False)
-        self.validation_step_outputs.clear()
+        f1sc = self.val_F1Score.compute() 
+        self.val_F1Score_best(f1sc)
+        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False)
 
     def test_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
+        loss, preds, target = self.model_step(batch)
 
         self.test_loss(loss)
-        self.test_accuracy(predictions, target)
-        self.test_recall(predictions, target)
-        self.test_precision(predictions, target)
-        self.test_F1Score(predictions, target)
-        self.test_avg_precision(predictions, target)
+        self.test_accuracy(preds, target)
+        self.test_recall(preds, target)
+        self.test_precision(preds, target)
+        self.test_F1Score(preds, target)
+        self.test_avg_precision(preds, target)
 
         self.log("test/loss", self.test_loss, prog_bar=True)
         self.log("test/accuracy", self.test_accuracy, on_step=False, on_epoch=True)
@@ -877,7 +911,7 @@ class Crop_PL(pl.LightningModule):
         )
         self.log("test/AP", self.test_avg_precision, on_step=False, on_epoch=True)
 
-        return {"loss": loss, "preds": predictions, "target": target}
+        return {"loss": loss, "preds": preds, "target": target}
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
