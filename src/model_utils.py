@@ -539,8 +539,8 @@ class CropTransformer(nn.Module):
         self.flatten = nn.Flatten()
 
     def forward(self, X):
-        embedding = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
-        output = self.transformer_enc(embedding)
+        # embedding = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
+        output = self.transformer_enc(X[0])
         output = self.flatten(output)
         output = self.net(torch.cat((output, X[1]), dim=1))
         return F.log_softmax(output, dim=1)
@@ -597,8 +597,8 @@ class Crop_LSTM(nn.Module):
             nn.Linear(hidden_size_mlp // 2, output_size),
         )
     def forward(self, X):
-        input = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
-        output, _ = self.lstm(input)
+        # input = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
+        output, _ = self.lstm(X[0])
         output = output[:, -1, :]
         output = self.net(torch.cat((output, X[1]), dim=1))
         return F.log_softmax(output, dim=1)
