@@ -35,7 +35,7 @@ with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS_ROS.pk
 
 # %%
 # initilize data module
-dm = CroplandDataModule_MLP(X=X, y=y, batch_size=1024)
+dm = CroplandDataModule_MLP(X=X, y=y, batch_size=65536)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -44,18 +44,18 @@ random.seed(142)
 
 network = Crop_MLP()
 # network.initialize_bias_weights(dm.y_train.argmax(dim=1))
-model = Crop_PL(net=network, lr=1e-3)
+model = Crop_PL(net=network, lr=1e-5)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/F1Score", min_delta=1e-3, patience=30, verbose=True, mode="max"
+    monitor="val/F1Score", min_delta=1e-3, patience=200, verbose=True, mode="max"
 )
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 trainer = pl.Trainer(
     max_epochs=500,
     accelerator="gpu",
-    # devices=[2],
+    devices=[0],
     check_val_every_n_epoch=1,
     callbacks=[early_stop_callback, lr_monitor, pl.callbacks.RichProgressBar()],
 )
