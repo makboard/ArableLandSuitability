@@ -11,15 +11,14 @@ import pytorch_lightning as pl
 import torch
 from src.model_utils import (
     custom_multiclass_report,
-    CroplandDataModule_MLP,
-    Crop_MLP,
-    Crop_PL,
+    CroplandDataModuleMLP,
+    CropMLP,
+    CropPL,
 )
-from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, RichProgressBar
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
-torch.set_float32_matmul_precision("medium")
+from torch.utils.data import DataLoader
 
 # %% [markdown]
 # ### Read from file
@@ -35,29 +34,32 @@ with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS_ROS.pk
 
 # %%
 # initilize data module
-dm = CroplandDataModule_MLP(X=X, y=y, batch_size=1024)
+dm = CroplandDataModuleMLP(X=X, y=y, batch_size=256)
 
 # initilize model
 warnings.filterwarnings("ignore")
 torch.manual_seed(142)
 random.seed(142)
 
-network = Crop_MLP()
+network = CropMLP()
 # network.initialize_bias_weights(dm.y_train.argmax(dim=1))
-model = Crop_PL(net=network, lr=1e-3)
+model = CropPL(net=network, lr=1e-3)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/F1Score", min_delta=1e-3, patience=30, verbose=True, mode="max"
+    monitor="val/F1Score", min_delta=1e-3, patience=50, verbose=True, mode="max"
 )
+model_saving = ModelCheckpoint(
+        save_top_k=3, mode="max", monitor="val/F1Score"
+    )
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 trainer = pl.Trainer(
     max_epochs=500,
     accelerator="gpu",
-    # devices=[2],
+    devices=[2],
     check_val_every_n_epoch=1,
-    callbacks=[early_stop_callback, lr_monitor, pl.callbacks.RichProgressBar()],
+    callbacks=[early_stop_callback, model_saving, lr_monitor, RichProgressBar()],
 )
 trainer.fit(model, dm)
 

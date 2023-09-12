@@ -11,16 +11,15 @@ import pytorch_lightning as pl
 import torch
 from src.model_utils import (
     custom_multiclass_report,
-    CroplandDataModule_LSTM,
+    CroplandDataModuleLSTM,
     CropTransformer,
-    Crop_PL,
+    CropPL,
 )
-from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, RichProgressBar
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import nn
 from torch.utils.data import DataLoader
 
-torch.set_float32_matmul_precision("medium")
 
 # %% [markdown]
 # ### Read from file
@@ -36,7 +35,7 @@ with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS_ROS_ls
 
 # %%
 # initilize data module
-dm = CroplandDataModule_LSTM(X=X, y=y, batch_size=1024)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=256)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -44,20 +43,23 @@ torch.manual_seed(142)
 random.seed(142)
 
 network = CropTransformer()
-model = Crop_PL(net=network, lr=1e-3)
+model = CropPL(net=network, lr=5e-3)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/F1Score", min_delta=1e-3, patience=30, verbose=True, mode="max"
+    monitor="val/F1Score", min_delta=1e-3, patience=50, verbose=True, mode="max"
 )
+model_saving = ModelCheckpoint(
+        save_top_k=3, mode="max", monitor="val/F1Score"
+    )
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 trainer = pl.Trainer(
     max_epochs=500,
     accelerator="gpu",
-    # devices=[3],
+    devices=[3],
     check_val_every_n_epoch=1,
-    callbacks=[early_stop_callback, lr_monitor, pl.callbacks.RichProgressBar()],
+    callbacks=[early_stop_callback, model_saving, lr_monitor, RichProgressBar()],
 )
 trainer.fit(model, dm)
 

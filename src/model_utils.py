@@ -433,7 +433,7 @@ class CroplandDataset(Dataset):
         
         return (x_monthly, x_static), target
 
-class CroplandDataModule_LSTM(pl.LightningDataModule):
+class CroplandDataModuleLSTM(pl.LightningDataModule):
     """
     This module defines a LightningDataModule class for loading and preparing data for a Cropland classification model using LSTM architecture.
 
@@ -443,9 +443,10 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
     batch_size (int): The batch size to be used for training and evaluation. Default is 128.
     """
 
-    def __init__(self, X: dict, y: dict, batch_size: int = 128):
+    def __init__(self, X: dict, y: dict, batch_size: int = 128, num_workers: int = 4):
         super().__init__()
         self.batch_size = batch_size
+        self.num_workers = num_workers
         self.X_monthly_train, self.X_monthly_val, self.X_monthly_test = (
             torch.FloatTensor(X["Train"][0]),
             torch.FloatTensor(X["Val"][0]),
@@ -462,7 +463,7 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
             torch.LongTensor(y["Test"]),
         )
 
-        self.dl_dict = {"batch_size": self.batch_size}
+        self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
@@ -473,13 +474,13 @@ class CroplandDataModule_LSTM(pl.LightningDataModule):
             self.dataset_test = CroplandDataset((self.X_monthly_test, self.X_static_test), self.y_test)
 
     def train_dataloader(self):
-        return DataLoader(self.dataset_train, shuffle=True, **self.dl_dict)
+        return DataLoader(self.dataset_train, shuffle=True, pin_memory=True, **self.dl_dict)
 
     def val_dataloader(self):
-        return DataLoader(self.dataset_val, **self.dl_dict)
+        return DataLoader(self.dataset_val, pin_memory=True, **self.dl_dict)
 
     def test_dataloader(self):
-        return DataLoader(self.dataset_test, **self.dl_dict)
+        return DataLoader(self.dataset_test, pin_memory=True, **self.dl_dict)
     
 class CropTransformer(nn.Module):
     """
@@ -504,16 +505,19 @@ class CropTransformer(nn.Module):
 
     def __init__(
         self,
-        d_model=10,
-        nhead=5,
-        dim_feedforward=128,
-        hidden_size=164,
+        input_size=10,
+        d_model=128,
+        nhead=16,
+        dim_feedforward=256,
+        hidden_size=172,
         num_layers=4,
         dropout=0.2,
         activation="gelu",
         output_size=4,
     ) -> None:
         super(CropTransformer, self).__init__()
+        
+        self.embedding = nn.Linear(input_size, d_model)
         
         self.transformer_enc = nn.TransformerEncoder(nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -526,27 +530,26 @@ class CropTransformer(nn.Module):
         
         self.net = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
+            nn.BatchNorm1d(hidden_size),
             nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
+            nn.BatchNorm1d(hidden_size // 2),
             nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(hidden_size // 2, output_size),
         )
-        
-        self.flatten = nn.Flatten()
 
     def forward(self, X):
-        # embedding = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
-        output = self.transformer_enc(X[0])
-        output = self.flatten(output)
-        output = self.net(torch.cat((output, X[1]), dim=1))
-        return F.log_softmax(output, dim=1)
+        montly_input = X[0]
+        embedded = self.embedding(montly_input)
+        encoded = self.transformer_enc(embedded)
+        pooled = torch.mean(encoded, dim=1)
+        output = self.net(torch.cat((pooled, X[1]), dim=1))
+        return output
 
 
-class Crop_LSTM(nn.Module):
+class CropLSTM(nn.Module):
     """
     A PyTorch module implementing a Crop LSTM network.
 
@@ -577,7 +580,7 @@ class Crop_LSTM(nn.Module):
         output_size=4,
         dropout=0.2,
     ) -> None:
-        super(Crop_LSTM, self).__init__()
+        super(CropLSTM, self).__init__()
         self.lstm = nn.LSTM(input_size=input_size,
                             hidden_size=hidden_size_lstm,
                             num_layers=num_layers,
@@ -597,11 +600,10 @@ class Crop_LSTM(nn.Module):
             nn.Linear(hidden_size_mlp // 2, output_size),
         )
     def forward(self, X):
-        # input = X[0].permute(0, 2, 1) # (batch_size, seq_len, features)
         output, _ = self.lstm(X[0])
         output = output[:, -1, :]
         output = self.net(torch.cat((output, X[1]), dim=1))
-        return F.log_softmax(output, dim=1)
+        return output
     
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
@@ -617,7 +619,7 @@ class CustomWeightedRandomSampler(WeightedRandomSampler):
         return iter(rand_tensor.tolist())
 
 
-class CroplandDataModule_MLP(pl.LightningDataModule):
+class CroplandDataModuleMLP(pl.LightningDataModule):
     """
     This module defines a LightningDataModule class for loading and 
         preparing data for a Cropland classification model using MLP architecture.
@@ -677,7 +679,7 @@ class CroplandDataModule_MLP(pl.LightningDataModule):
         return DataLoader(self.dataset_test, **self.dl_dict)
 
 
-class Crop_MLP(nn.Module):
+class CropMLP(nn.Module):
     """
     A multi-layer perceptron (MLP) used for crop classification.
     Args:
@@ -690,14 +692,14 @@ class Crop_MLP(nn.Module):
     """
 
     def __init__(self, input_size=164, output_size=4) -> None:
-        super(Crop_MLP, self).__init__()
+        super(CropMLP, self).__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(input_size, 8 * input_size),
-            nn.BatchNorm1d(8 * input_size),
+            nn.Linear(input_size, 2 * input_size),
+            nn.BatchNorm1d(2 * input_size),
             nn.LeakyReLU(),
             nn.Dropout(0.7),
-            nn.Linear(8 * input_size, 4 * input_size),
+            nn.Linear(2 * input_size, 4 * input_size),
             nn.BatchNorm1d(4 * input_size),
             nn.LeakyReLU(),
             nn.Dropout(0.5),
@@ -737,22 +739,18 @@ class Crop_MLP(nn.Module):
 
     def forward(self, X) -> torch.Tensor:
         output = self.net(X)
-        return F.log_softmax(output, dim=1)
+        return output
 
 
-class Crop_PL(pl.LightningModule):
+class CropPL(pl.LightningModule):
     """
     PyTorch Lightning module for training a crop classification neural network.
 
     Args:
-    net (torch.nn.Module): the neural network module to be trained.
-    num_classes
-
-    Attributes:
-    softmax (nn.Softmax): softmax activation function.
-    criterion (nn.CrossEntropyLoss): cross entropy loss function.
-    optimizer (torch.optim.Adam)
-    scheduler (torch.optim.lr_scheduler.ReduceLROnPlateau)
+        net (torch.nn.Module): the neural network module to be trained.
+        num_classes (int): the number of classes in the dataset.
+        lr (float): the learning rate for optimization.
+        weight_decay (float): the weight decay for optimization.
     """
 
     def __init__(
@@ -767,12 +765,16 @@ class Crop_PL(pl.LightningModule):
         self.net = net
         self.lr = lr
         self.weight_decay = weight_decay
+        self.criterion = nn.CrossEntropyLoss()
+        self.softmax = nn.Softmax(dim=1)
 
         self.train_loss = torchmetrics.MeanMetric()
         self.val_loss = torchmetrics.MeanMetric()
         self.test_loss = torchmetrics.MeanMetric()
-        self.val_F1Score_best = torchmetrics.MaxMetric()
         
+        # for tracking best so far validation f1score
+        self.val_F1Score_best = torchmetrics.MaxMetric()
+
         self.train_accuracy = torchmetrics.Accuracy(
             task="multiclass", num_classes=num_classes, top_k=1
         )
@@ -815,30 +817,27 @@ class Crop_PL(pl.LightningModule):
     def forward(self, x):
         return self.net(x)
 
-    def loss(self, y_hat, y):
-        return F.cross_entropy(y_hat, y)
-
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams)
+        self.val_loss.reset()
+        self.val_accuracy.reset()
+        self.val_avg_precision.reset()
+        self.val_precision.reset() 
+        self.val_recall.reset()
+        self.val_F1Score.reset()
         self.val_F1Score_best.reset()
+        
 
-    def model_step(self, batch):
-        x, y = batch
-        logits = self.forward(x)
-        loss = F.cross_entropy(logits, y.float())
-        preds = F.softmax(logits, dim=1)
-        return loss, preds, torch.argmax(y, dim=1)
+    def step(self, batch):
+        features, ohe_targets = batch
+        logits = self.forward(features)
+        loss = self.criterion(logits, ohe_targets.argmax(dim=1))
+        preds = self.softmax(logits)
+        return loss, preds, ohe_targets.argmax(dim=1)
 
     def training_step(self, batch, batch_idx):
-        loss, preds, target = self.model_step(batch)
-
+        loss, preds, target = self.step(batch)
         self.train_loss(loss)
-        self.train_accuracy(preds, target)
-        self.train_recall(preds, target)
-        self.train_precision(preds, target)
-        self.train_F1Score(preds, target)
-        self.train_avg_precision(preds, target)
-
         self.log(
             "train/loss",
             self.train_loss,
@@ -847,6 +846,17 @@ class Crop_PL(pl.LightningModule):
             prog_bar=True,
             logger=True,
         )
+        
+        # To account for Dropout behavior during evaluation
+        self.net.eval()
+        with torch.no_grad():
+            _, preds, target = self.step(batch)
+        self.train_accuracy(preds, target)
+        self.train_recall(preds, target)
+        self.train_precision(preds, target)
+        self.train_F1Score(preds, target)
+        self.train_avg_precision(preds, target)
+
         self.log("train/accuracy", self.train_accuracy, on_step=False, on_epoch=True)
         self.log("train/recall", self.train_recall, on_step=False, on_epoch=True)
         self.log("train/precision", self.train_precision, on_step=False, on_epoch=True)
@@ -859,11 +869,14 @@ class Crop_PL(pl.LightningModule):
             logger=True,
         )
         self.log("train/AP", self.train_avg_precision, on_step=False, on_epoch=True)
-
-        return {"loss": loss, "preds": preds, "target": target}
+        self.net.train()
+        return loss
+    
+    def on_train_epoch_end(self) -> None:
+        pass
 
     def validation_step(self, batch, batch_idx):
-        loss, preds, target = self.model_step(batch)
+        loss, preds, target = self.step(batch)
 
         self.val_loss(loss)
         self.val_accuracy(preds, target)
@@ -881,15 +894,13 @@ class Crop_PL(pl.LightningModule):
         )
         self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
 
-        return {"loss": loss, "preds": preds, "target": target}
-
     def on_validation_epoch_end(self): 
-        f1sc = self.val_F1Score.compute() 
-        self.val_F1Score_best(f1sc)
-        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False)
+        f1sc = self.val_F1Score.compute() # get current val f1score
+        self.val_F1Score_best(f1sc) # update best so far val f1score
+        self.log("val/F1Score_best", self.val_F1Score_best.compute(), sync_dist=True, prog_bar=False)
 
     def test_step(self, batch, batch_idx):
-        loss, preds, target = self.model_step(batch)
+        loss, preds, target = self.step(batch)
 
         self.test_loss(loss)
         self.test_accuracy(preds, target)
@@ -910,9 +921,10 @@ class Crop_PL(pl.LightningModule):
             prog_bar=True,
         )
         self.log("test/AP", self.test_avg_precision, on_step=False, on_epoch=True)
-
-        return {"loss": loss, "preds": preds, "target": target}
-
+    
+    def on_test_epoch_end(self) -> None:
+        pass
+    
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay
@@ -934,6 +946,7 @@ class Crop_PL(pl.LightningModule):
                     "scheduler": scheduler,
                     "monitor": "val/loss",
                     "frequency": 1,
+                    "interval": "epoch",
                 },
             }
         return {"optimizer": optimizer}
