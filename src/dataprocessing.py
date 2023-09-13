@@ -245,7 +245,7 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
                 elif key in ["altitude", "std_precip_index", "latitude", "longitude"]:
                     Features_dict[str(key)] = np.stack(
                         [v for v in list(data[key].squeeze())], dtype=np.float16
-                    ).reshape(-1)
+                    ).reshape(-1)   
 
             pickle.dump(Features_dict, f, protocol=4)
 

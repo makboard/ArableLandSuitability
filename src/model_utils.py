@@ -1118,7 +1118,7 @@ class CropPL(pl.LightningModule):
         if scheduler is not None:
             scheduler = scheduler(
                 optimizer=optimizer,
-                patience=10,
+                patience=20,
                 mode="min",
                 factor=0.5,
                 verbose=True,
