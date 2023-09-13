@@ -238,13 +238,13 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
                             band_names[str(i)]
                             + "_"
                             + str(int(re.search(r"\d+", key).group()))
-                        ] = np.stack([v for v in list(data[key][i - 1, :, :])]).reshape(
-                            -1
-                        )
+                        ] = np.stack([v for v in list(data[key][i - 1, :, :])], dtype=np.float16
+                        ).reshape(-1)
+                        
                 # Relief and SPI data
                 elif key in ["altitude", "std_precip_index", "latitude", "longitude"]:
                     Features_dict[str(key)] = np.stack(
-                        [v for v in list(data[key].squeeze())]
+                        [v for v in list(data[key].squeeze())], dtype=np.float16
                     ).reshape(-1)
 
             pickle.dump(Features_dict, f, protocol=4)
