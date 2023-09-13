@@ -321,17 +321,19 @@ def crop_tiff(path_src, path_dest, bound):
     print(len(files), "images croped")
 
 
-def reshape_tiff(path_src, path_dest, bound):
-    """Reshapes .tiff file and writes new one
+def reshape_tiff(path_src, path_dest, bound, interpolation="cubic"):
+    """Reshapes .tiff file and writes a new one with specified interpolation method.
 
     Parameters:
     --------
-        path_src: Callable[str]
+        path_src: str
             Source folder
-        path_dest: Callable[Dict]
+        path_dest: str
             Destination folder
-        bound: Callable[Object]
+        bound: object
             Transformation properties
+        interpolation: str, optional
+            Interpolation method ("nearest", "bilinear", "cubic", etc.)
 
     Returns:
     --------
@@ -342,9 +344,20 @@ def reshape_tiff(path_src, path_dest, bound):
     if not os.path.exists(path_dest):
         os.makedirs(path_dest)
 
-    # Apply those parameters for transformation
+    # Define the resampling method based on the user's choice
+    resampling_method = None
+    if interpolation == "nearest":
+        resampling_method = rasterio.enums.Resampling.nearest
+    elif interpolation == "bilinear":
+        resampling_method = rasterio.enums.Resampling.bilinear
+    elif interpolation == "cubic":
+        resampling_method = rasterio.enums.Resampling.cubic
+    elif interpolation == "mode":
+        resampling_method = rasterio.enums.Resampling.mode
+    # Add more options for other interpolation methods as needed
+
     for fname in tqdm(files):
-        filepath = path_src + fname
+        filepath = os.path.join(path_src, fname)
 
         with rasterio.open(filepath) as src:
             # Create a new cropped raster to write to
@@ -354,13 +367,15 @@ def reshape_tiff(path_src, path_dest, bound):
                     "height": bound.height,
                     "width": bound.width,
                     "transform": bound.transform,
+                    "dtype": np.float32,
                 }
             )
 
             with rasterio.open(path_dest + fname, "w", **profile) as dst:
-                # Read the data and write it to the output raster
-                dst.write(src.read())
-    print(len(files), "images reshaped")
+                # Read the data and write it to the output raster with the specified resampling method
+                dst.write(src.read(out_shape=(src.count, bound.height, bound.width), resampling=resampling_method))
+
+    print(len(files), "images reshaped with", interpolation, "interpolation")
 
 
 def rename_climate(path, ssps):
