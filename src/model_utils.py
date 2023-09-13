@@ -814,9 +814,10 @@ class CroplandDataModuleMLP(pl.LightningDataModule):
     batch_size (int): The batch size to be used for training and evaluation. Default is 128.
     """
 
-    def __init__(self, X: dict, y: dict, batch_size: int = 128):
+    def __init__(self, X: dict, y: dict, batch_size: int = 128, num_workers: int = 4):
         super().__init__()
         self.batch_size = batch_size
+        self.num_workers = num_workers
         self.X_train, self.X_val, self.X_test = (
             torch.FloatTensor(X["Train"]),
             torch.FloatTensor(X["Val"]),
@@ -828,7 +829,7 @@ class CroplandDataModuleMLP(pl.LightningDataModule):
             torch.LongTensor(y["Test"]),
         )
 
-        self.dl_dict = {"batch_size": self.batch_size}
+        self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
 
     def prepare_data(self):
         # Calculate class weights for imbalanced dataset
