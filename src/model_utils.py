@@ -671,7 +671,7 @@ class ConvLSTMCell(nn.Module):
                 torch.zeros(batch_size, self.hidden_dim, length, device=self.conv.weight.device))
 
 
-class Crop_ConvLSTM(nn.Module):
+class CropConvLSTM(nn.Module):
 
     """
     A PyTorch module implementing a Crop Conv LSTM network.
@@ -705,14 +705,18 @@ class Crop_ConvLSTM(nn.Module):
         bias: bool=True,
         return_all_layers: bool=False
         ) -> None:
-        super(Crop_ConvLSTM, self).__init__()
+        super(CropConvLSTM, self).__init__()
 
-        self._check_kernel_size_consistency(kernel_size)
+        
+        
+        assert (isinstance(kernel_size, tuple) or
+                (isinstance(kernel_size, list) and all([isinstance(elem, tuple) for elem in kernel_size]))),'`kernel_size` must be tuple or list of tuples' 
+        # self._check_kernel_size_consistency(kernel_size)
+        
         # Make sure that both `kernel_size` and `hidden_dim` are lists having len == n_layers
         kernel_size = self._extend_for_multilayer(kernel_size, n_layers)
         hidden_dim = self._extend_for_multilayer(hidden_dim, n_layers)
-        if not len(kernel_size) == len(hidden_dim) == n_layers:
-            raise ValueError('Inconsistent list length.')
+        assert len(kernel_size) == len(hidden_dim) == n_layers, 'Inconsistent list length.'
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -737,10 +741,18 @@ class Crop_ConvLSTM(nn.Module):
         
         self.flatten = nn.Flatten()
         self.net = nn.Sequential(
-            nn.Linear(self.hidden_dim[0]*self.seq_len*self.input_len_monthly+self.input_len_static, self.n_classes),
-            nn.ReLU()
+            nn.Linear(self.hidden_dim[0]*self.seq_len*self.input_len_monthly+self.input_len_static, self.hidden_dim[0]*self.seq_len),
+            nn.BatchNorm1d(self.hidden_dim[0]*self.seq_len),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(self.hidden_dim[0]*self.seq_len, self.seq_len),
+            nn.BatchNorm1d(self.seq_len),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(self.seq_len, self.n_classes)
         )
-    def forward(self, input):
+        
+    def forward(self, input, hidden_state=None):
         """
         Args:
         input (tuple):  input[0] is a tensor of shape (batch_size, sequence_length, input_size) containing the monthly input sequence.
@@ -755,7 +767,10 @@ class Crop_ConvLSTM(nn.Module):
         b = input_monthly.size()[0]
 
         # Implement stateful ConvLSTM
-        hidden_state = self._init_hidden(batch_size=b, length=self.input_len_monthly)
+        if hidden_state is not None:
+            raise NotImplementedError()
+        else:
+            hidden_state = self._init_hidden(batch_size=b, length=self.input_len_monthly)
 
         layer_output_list = []
         last_state_list = []
@@ -783,7 +798,7 @@ class Crop_ConvLSTM(nn.Module):
         output_monthly = self.flatten(layer_output_list[0])        
         output = self.net(torch.cat((output_monthly, input_static), dim=1))
 
-        return nn.functional.log_softmax(output, dim=1)
+        return output
 
     def _init_hidden(self, batch_size, length):
         init_states = []
@@ -791,11 +806,11 @@ class Crop_ConvLSTM(nn.Module):
             init_states.append(self.cell_list[i].init_hidden(batch_size, length))
         return init_states
 
-    @staticmethod
-    def _check_kernel_size_consistency(kernel_size):
-        if not (isinstance(kernel_size, tuple) or
-                (isinstance(kernel_size, list) and all([isinstance(elem, tuple) for elem in kernel_size]))):
-            raise ValueError('`kernel_size` must be tuple or list of tuples')
+    # @staticmethod
+    # def _check_kernel_size_consistency(kernel_size):
+    #     if not (isinstance(kernel_size, tuple) or
+    #             (isinstance(kernel_size, list) and all([isinstance(elem, tuple) for elem in kernel_size]))):
+    #         raise ValueError('`kernel_size` must be tuple or list of tuples')
 
     @staticmethod
     def _extend_for_multilayer(param, n_layers):
@@ -852,8 +867,8 @@ class CroplandDataModuleMLP(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.dataset_train,
-            shuffle=True,
-            # sampler=self.sampler,
+            # shuffle=True,
+            sampler=self.sampler,
             **self.dl_dict,
         )
 
