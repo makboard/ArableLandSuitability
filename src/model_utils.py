@@ -7,7 +7,7 @@ import numpy as np
 import math
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
-from imblearn.under_sampling import RandomUnderSampler
+from imblearn.under_sampling import RandomUnderSampler, TomekLinks
 from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import (
     average_precision_score,
@@ -108,10 +108,11 @@ def downsample(X, y, oversampling=False, oversampling_strategy='ROS'):
     # Define over- and undersampling strategies
     overSMOTE = SMOTE(random_state=42, n_jobs=-1)
     overROS =  RandomOverSampler(random_state=42)
-    under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  
-        random_state=42,
-    )
+    # under = RandomUnderSampler(
+    #     sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  
+    #     random_state=42,
+    # )
+    under = TomekLinks()
 
     # Define pipeline steps
     if oversampling:
