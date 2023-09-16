@@ -2,11 +2,14 @@ import copy
 import os
 import sys
 
-sys.path.append('..')
+from sklearn.utils import resample
+
+sys.path.append("..")
 
 import fiona
 import matplotlib.pyplot as plt
 import numpy as np
+import rasterio
 import rioxarray as rxr
 import xarray as xr
 from src.dataprocessing import get_class_distribution
@@ -53,7 +56,9 @@ def reproject_and_Feature_match(
 
     # Apply reprojection based on Feature dimensions (Target_new)
     Target_new.rio.write_crs(crs_wgs84, inplace=True)
-    Target_new = Target_wgs84.rio.reproject_match(Target_new)
+    Target_new = Target_wgs84.rio.reproject_match(
+        Target_new, resampling=rasterio.enums.Resampling.nearest
+    )
     Target_new = xr.where(Target_new == 255, np.nan, Target_new)
 
     # Checking classes balance after reprojection
