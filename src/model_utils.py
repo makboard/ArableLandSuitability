@@ -506,13 +506,13 @@ class CropTransformer(nn.Module):
     def __init__(
         self,
         input_size=10,
-        d_model=128,
+        d_model=256,
         nhead=16,
         dim_feedforward=256,
-        hidden_size=172,
-        num_layers=4,
+        hidden_size=300,
+        num_layers=2,
         dropout=0.2,
-        activation="gelu",
+        activation="relu",
         output_size=4,
     ) -> None:
         super(CropTransformer, self).__init__()
@@ -528,24 +528,20 @@ class CropTransformer(nn.Module):
             batch_first=True,
         ), num_layers=num_layers)
         
-        self.net = nn.Sequential(
+        self.classifier = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.GELU(),
+            nn.LayerNorm(hidden_size),
+            nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.BatchNorm1d(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size // 2, output_size),
+            nn.Linear(hidden_size, output_size),
         )
 
     def forward(self, X):
         montly_input = X[0]
         embedded = self.embedding(montly_input)
         encoded = self.transformer_enc(embedded)
-        pooled = torch.mean(encoded, dim=1)
-        output = self.net(torch.cat((pooled, X[1]), dim=1))
+        output = encoded[:, -1, :]
+        output = self.classifier(torch.cat((output, X[1]), dim=1))
         return output
 
 
@@ -574,9 +570,9 @@ class CropLSTM(nn.Module):
     def __init__(
         self,
         input_size=10,
-        hidden_size_lstm=64,
-        hidden_size_mlp=172,
-        num_layers=2,
+        hidden_size_lstm=128,
+        hidden_size_mlp=300,
+        num_layers=1,
         output_size=4,
         dropout=0.2,
     ) -> None:
@@ -588,22 +584,18 @@ class CropLSTM(nn.Module):
                             dropout=dropout,
                             bidirectional=True
                             )
-        self.net = nn.Sequential(
+        self.classifier = nn.Sequential(
             nn.Linear(hidden_size_mlp, hidden_size_mlp),
             nn.BatchNorm1d(hidden_size_mlp),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(hidden_size_mlp, hidden_size_mlp // 2),
-            nn.BatchNorm1d(hidden_size_mlp // 2),
-            nn.LeakyReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size_mlp // 2, output_size),
+            nn.Linear(hidden_size_mlp, output_size),
         )
     def forward(self, X):
         output, _ = self.lstm(X[0])
-        # extract only the last time step
+        # extract only the last hidden
         output = output[:, -1, :]
-        output = self.net(torch.cat((output, X[1]), dim=1))
+        output = self.classifier(torch.cat((output, X[1]), dim=1))
         return output
     
 class CustomWeightedRandomSampler(WeightedRandomSampler):
@@ -896,18 +888,18 @@ class CropMLP(nn.Module):
         super(CropMLP, self).__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(input_size, 2 * input_size),
-            nn.BatchNorm1d(2 * input_size),
-            nn.LeakyReLU(),
-            nn.Dropout(0.7),
-            nn.Linear(2 * input_size, 4 * input_size),
-            nn.BatchNorm1d(4 * input_size),
+            nn.Linear(input_size, 8 * input_size),
+            nn.BatchNorm1d(8 * input_size),
             nn.LeakyReLU(),
             nn.Dropout(0.5),
+            nn.Linear(8 * input_size, 4 * input_size),
+            nn.BatchNorm1d(4 * input_size),
+            nn.LeakyReLU(),
+            nn.Dropout(0.4),
             nn.Linear(4 * input_size, 2 * input_size),
             nn.BatchNorm1d(2 * input_size),
             nn.LeakyReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.4),
             nn.Linear(2 * input_size, input_size),
             nn.BatchNorm1d(input_size),
             nn.LeakyReLU(),
@@ -916,11 +908,7 @@ class CropMLP(nn.Module):
             nn.BatchNorm1d(input_size // 2),
             nn.LeakyReLU(),
             nn.Dropout(0.2),
-            nn.Linear(input_size // 2, input_size // 8),
-            nn.BatchNorm1d(input_size // 8),
-            nn.LeakyReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(input_size // 8, output_size),
+            nn.Linear(input_size // 2, output_size),
         )
 
     def initialize_bias_weights(self, y_train):
@@ -967,7 +955,7 @@ class CropPL(pl.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.criterion = nn.CrossEntropyLoss()
-        self.softmax = nn.Softmax(dim=1)
+        self.softmax = nn.Softmax()
 
         self.train_loss = torchmetrics.MeanMetric()
         self.val_loss = torchmetrics.MeanMetric()
@@ -1017,6 +1005,9 @@ class CropPL(pl.LightningModule):
 
     def forward(self, x):
         return self.net(x)
+    
+    def loss(self, y_hat, y):
+        return self.criterion(y_hat, y)
 
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams)
@@ -1029,15 +1020,15 @@ class CropPL(pl.LightningModule):
         self.val_F1Score_best.reset()
         
 
-    def step(self, batch):
+    def model_step(self, batch):
         features, ohe_targets = batch
         logits = self.forward(features)
-        loss = self.criterion(logits, ohe_targets.argmax(dim=1))
+        loss = self.loss(logits, ohe_targets.float())
         preds = self.softmax(logits)
         return loss, preds, ohe_targets.argmax(dim=1)
 
     def training_step(self, batch, batch_idx):
-        loss, preds, target = self.step(batch)
+        loss, preds, target = self.model_step(batch)
         self.train_loss(loss)
         self.log(
             "train/loss",
@@ -1051,7 +1042,7 @@ class CropPL(pl.LightningModule):
         # To account for Dropout behavior during evaluation
         self.net.eval()
         with torch.no_grad():
-            _, preds, target = self.step(batch)
+            _, preds, target = self.model_step(batch)
         self.train_accuracy(preds, target)
         self.train_recall(preds, target)
         self.train_precision(preds, target)
@@ -1071,13 +1062,13 @@ class CropPL(pl.LightningModule):
         )
         self.log("train/AP", self.train_avg_precision, on_step=False, on_epoch=True)
         self.net.train()
-        return loss
+        return {"loss": loss, "preds": preds, "target": target}
     
     def on_train_epoch_end(self) -> None:
         pass
 
     def validation_step(self, batch, batch_idx):
-        loss, preds, target = self.step(batch)
+        loss, preds, target = self.model_step(batch)
 
         self.val_loss(loss)
         self.val_accuracy(preds, target)
@@ -1095,13 +1086,15 @@ class CropPL(pl.LightningModule):
         )
         self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
 
+        return {"loss": loss, "preds": preds, "target": target}
+    
     def on_validation_epoch_end(self): 
         f1sc = self.val_F1Score.compute() # get current val f1score
         self.val_F1Score_best(f1sc) # update best so far val f1score
-        self.log("val/F1Score_best", self.val_F1Score_best.compute(), sync_dist=True, prog_bar=False)
+        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False) # sync_dist=True
 
     def test_step(self, batch, batch_idx):
-        loss, preds, target = self.step(batch)
+        loss, preds, target = self.model_step(batch)
 
         self.test_loss(loss)
         self.test_accuracy(preds, target)
@@ -1122,6 +1115,8 @@ class CropPL(pl.LightningModule):
             prog_bar=True,
         )
         self.log("test/AP", self.test_avg_precision, on_step=False, on_epoch=True)
+
+        return {"loss": loss, "preds": preds, "target": target}
     
     def on_test_epoch_end(self) -> None:
         pass
@@ -1134,12 +1129,12 @@ class CropPL(pl.LightningModule):
         if scheduler is not None:
             scheduler = scheduler(
                 optimizer=optimizer,
-                patience=20,
+                patience=10,
                 mode="min",
                 factor=0.5,
                 verbose=True,
                 min_lr=1e-8,
-                threshold=1e-3,
+                threshold=5e-4,
             )
             return {
                 "optimizer": optimizer,
