@@ -34,7 +34,7 @@ with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS_ROS_ls
 
 # %%
 # initilize data module
-dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=256)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=256, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -46,7 +46,7 @@ model = CropPL(net=network, lr=1e-3)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="max"
+    monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="min"
 )
 model_saving = ModelCheckpoint(
         save_top_k=3, mode="max", monitor="val/F1Score"
