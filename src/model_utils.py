@@ -1,10 +1,8 @@
-from unicodedata import bidirectional
 import warnings
 from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
-import math
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
@@ -85,7 +83,7 @@ def get_unique_values(data):
     return values
 
 
-def downsample(X, y, oversampling=False, oversampling_strategy='ROS'):
+def downsample(X, y, oversampling=False, oversampling_strategy="ROS"):
     """Downsample the most frequent class to the second frequent one
     and optionally oversample the rest classes
     Downsampling is performed by RandomUnderSampler
@@ -107,18 +105,18 @@ def downsample(X, y, oversampling=False, oversampling_strategy='ROS'):
 
     # Define over- and undersampling strategies
     overSMOTE = SMOTE(random_state=42, n_jobs=-1)
-    overROS =  RandomOverSampler(random_state=42)
-    # under = RandomUnderSampler(
-    #     sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},  
-    #     random_state=42,
-    # )
-    under = TomekLinks()
+    overROS = RandomOverSampler(random_state=42)
+    under = RandomUnderSampler(
+        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},
+        random_state=42,
+    )
+    # under = TomekLinks()
 
     # Define pipeline steps
     if oversampling:
-        if oversampling_strategy == 'ROS':
+        if oversampling_strategy == "ROS":
             steps = [("u", under), ("o", overROS)]
-        elif oversampling_strategy == 'SMOTE':
+        elif oversampling_strategy == "SMOTE":
             steps = [("u", under), ("o", overSMOTE)]
         else:
             raise ValueError("Not implemented oversampling strategy!")
@@ -198,15 +196,16 @@ def reshape_data(X):
     X_static = X[list_of_static_features].to_numpy()
     # Reshape monthly features
     X_monthly = X_monthly.to_numpy().reshape(
-        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12)
-    X_monthly = np.transpose(X_monthly, (0, 2, 1)) # samples, sequence, features
+        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12
+    )
+    X_monthly = np.transpose(X_monthly, (0, 2, 1))  # samples, sequence, features
 
     return X_monthly, X_static, list_of_monthly_features, list_of_static_features
 
 
 def calculate_tpr_fpr(y_real, y_pred):
     """
-    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr) 
+    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr)
             based on real and predicted observations
 
     Args:
@@ -234,12 +233,12 @@ def calculate_tpr_fpr(y_real, y_pred):
 
 def get_all_roc_coordinates(y_real, y_proba):
     """
-    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point 
+    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point
         as a threshold for the predicion of the class.
 
     Args:
         y_real: The list or series with the real classes.
-        y_proba: The array with the probabilities for each class, 
+        y_proba: The array with the probabilities for each class,
             obtained by using the `.predict_proba()` method.
 
     Returns:
@@ -418,11 +417,12 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
     print(f"average ROC AUC OvO: {avg_roc_auc/i:.4f}")
     # -----------------------------------------------------
 
+
 class CroplandDataset(Dataset):
     def __init__(self, X, y):
-        self.X_monthly = X[0]  
-        self.X_static = X[1] 
-        self.y = y 
+        self.X_monthly = X[0]
+        self.X_static = X[1]
+        self.y = y
 
     def __len__(self):
         return len(self.y)
@@ -431,8 +431,9 @@ class CroplandDataset(Dataset):
         x_monthly = self.X_monthly[idx]
         x_static = self.X_static[idx]
         target = self.y[idx]
-        
+
         return (x_monthly, x_static), target
+
 
 class CroplandDataModuleLSTM(pl.LightningDataModule):
     """
@@ -463,26 +464,50 @@ class CroplandDataModuleLSTM(pl.LightningDataModule):
             torch.LongTensor(y["Val"]),
             torch.LongTensor(y["Test"]),
         )
-
+        
         self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
+
+    def prepare_data(self):
+        # Calculate class weights for imbalanced dataset
+        _, counts = torch.unique(self.y_train.argmax(dim=1), return_counts=True)
+        class_weights = 1.0 / torch.sqrt(counts.float())
+        loss_weights = class_weights / class_weights.sum()
+        ds = self.y_train.argmax(dim=1)
+        weights = [loss_weights[i] for i in ds]
+        self.sampler = CustomWeightedRandomSampler(
+            weights, num_samples=len(weights), replacement=True
+        )
 
     def setup(self, stage=None):
         if stage == "fit" or stage is None:
-            self.dataset_train = CroplandDataset((self.X_monthly_train, self.X_static_train), self.y_train)
-            self.dataset_val = CroplandDataset((self.X_monthly_val, self.X_static_val), self.y_val)
+            self.dataset_train = CroplandDataset(
+                (self.X_monthly_train, self.X_static_train), self.y_train
+            )
+            self.dataset_val = CroplandDataset(
+                (self.X_monthly_val, self.X_static_val), self.y_val
+            )
 
         if stage == "test" or stage is None:
-            self.dataset_test = CroplandDataset((self.X_monthly_test, self.X_static_test), self.y_test)
+            self.dataset_test = CroplandDataset(
+                (self.X_monthly_test, self.X_static_test), self.y_test
+            )
 
     def train_dataloader(self):
-        return DataLoader(self.dataset_train, shuffle=True, pin_memory=True, **self.dl_dict)
+        return DataLoader(
+            self.dataset_train,
+            #   shuffle=True,
+            pin_memory=True,
+            sampler=self.sampler,
+            **self.dl_dict,
+        )
 
     def val_dataloader(self):
         return DataLoader(self.dataset_val, pin_memory=True, **self.dl_dict)
 
     def test_dataloader(self):
         return DataLoader(self.dataset_test, pin_memory=True, **self.dl_dict)
-    
+
+
 class CropTransformer(nn.Module):
     """
     A PyTorch module implementing a Crop Transformer classifier.
@@ -517,18 +542,21 @@ class CropTransformer(nn.Module):
         output_size=4,
     ) -> None:
         super(CropTransformer, self).__init__()
-        
+
         self.embedding = nn.Linear(input_size, d_model)
-        
-        self.transformer_enc = nn.TransformerEncoder(nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            activation=activation,
-            batch_first=True,
-        ), num_layers=num_layers)
-        
+
+        self.transformer_enc = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation=activation,
+                batch_first=True,
+            ),
+            num_layers=num_layers,
+        )
+
         self.classifier = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.LayerNorm(hidden_size),
@@ -578,13 +606,14 @@ class CropLSTM(nn.Module):
         dropout=0.2,
     ) -> None:
         super(CropLSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size=input_size,
-                            hidden_size=hidden_size_lstm,
-                            num_layers=num_layers,
-                            batch_first=True,
-                            dropout=dropout,
-                            bidirectional=True
-                            )
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size_lstm,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True,
+        )
         self.classifier = nn.Sequential(
             nn.Linear(hidden_size_mlp, hidden_size_mlp),
             nn.BatchNorm1d(hidden_size_mlp),
@@ -592,23 +621,28 @@ class CropLSTM(nn.Module):
             nn.Dropout(0.3),
             nn.Linear(hidden_size_mlp, output_size),
         )
+
     def forward(self, X):
         output, _ = self.lstm(X[0])
         # extract only the last hidden
         output = output[:, -1, :]
         output = self.classifier(torch.cat((output, X[1]), dim=1))
         return output
-    
+
+
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
+
     def __init__(self, weights, num_samples, replacement=True):
         super().__init__(weights, num_samples, replacement=replacement)
 
     def __iter__(self):
-        rand_tensor = np.random.choice(range(0, len(self.weights)),
-                                    size=self.num_samples,
-                                    p=self.weights.numpy() / torch.sum(self.weights).numpy(),
-                                    replace=self.replacement)
+        rand_tensor = np.random.choice(
+            range(0, len(self.weights)),
+            size=self.num_samples,
+            p=self.weights.numpy() / torch.sum(self.weights).numpy(),
+            replace=self.replacement,
+        )
         rand_tensor = torch.from_numpy(rand_tensor)
         return iter(rand_tensor.tolist())
 
@@ -623,13 +657,8 @@ class ConvLSTMCell(nn.Module):
     kernel_size (int): Size of the convolutional kernel.
     bias (bool): Whether to add the bias.
     """
-    
-    def __init__(self,
-        input_dim,
-        hidden_dim,
-        kernel_size,
-        bias):
 
+    def __init__(self, input_dim, hidden_dim, kernel_size, bias):
         super(ConvLSTMCell, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -637,11 +666,13 @@ class ConvLSTMCell(nn.Module):
         self.padding = kernel_size[0] // 2
         self.bias = bias
 
-        self.conv = nn.Conv1d(in_channels=self.input_dim + self.hidden_dim,
-                            out_channels=4 * self.hidden_dim,
-                            kernel_size=self.kernel_size,
-                            padding=self.padding,
-                            bias=self.bias)
+        self.conv = nn.Conv1d(
+            in_channels=self.input_dim + self.hidden_dim,
+            out_channels=4 * self.hidden_dim,
+            kernel_size=self.kernel_size,
+            padding=self.padding,
+            bias=self.bias,
+        )
 
     def forward(self, input, cur_state):
         h_cur, c_cur = cur_state
@@ -660,15 +691,21 @@ class ConvLSTMCell(nn.Module):
         return h_next, c_next
 
     def init_hidden(self, batch_size, length):
-        return (torch.zeros(batch_size, self.hidden_dim, length, device=self.conv.weight.device),
-                torch.zeros(batch_size, self.hidden_dim, length, device=self.conv.weight.device))
+        return (
+            torch.zeros(
+                batch_size, self.hidden_dim, length, device=self.conv.weight.device
+            ),
+            torch.zeros(
+                batch_size, self.hidden_dim, length, device=self.conv.weight.device
+            ),
+        )
 
 
 class CropConvLSTM(nn.Module):
 
     """
     A PyTorch module implementing a Crop Conv LSTM network.
-    
+
     Parameters:
         input_dim: Number of channels in input
         hidden_dim: Number of hidden channels
@@ -686,7 +723,8 @@ class CropConvLSTM(nn.Module):
                     each element of the list is a tuple (h, c) for hidden state and memory
     """
 
-    def __init__(self,
+    def __init__(
+        self,
         input_dim: int,
         hidden_dim: int,
         kernel_size: tuple,
@@ -695,21 +733,23 @@ class CropConvLSTM(nn.Module):
         input_len_monthly: int,
         seq_len: int,
         input_len_static: int,
-        bias: bool=True,
-        return_all_layers: bool=False
-        ) -> None:
+        bias: bool = True,
+        return_all_layers: bool = False,
+    ) -> None:
         super(CropConvLSTM, self).__init__()
 
-        
-        
-        assert (isinstance(kernel_size, tuple) or
-                (isinstance(kernel_size, list) and all([isinstance(elem, tuple) for elem in kernel_size]))),'`kernel_size` must be tuple or list of tuples' 
+        assert isinstance(kernel_size, tuple) or (
+            isinstance(kernel_size, list)
+            and all([isinstance(elem, tuple) for elem in kernel_size])
+        ), "`kernel_size` must be tuple or list of tuples"
         # self._check_kernel_size_consistency(kernel_size)
-        
+
         # Make sure that both `kernel_size` and `hidden_dim` are lists having len == n_layers
         kernel_size = self._extend_for_multilayer(kernel_size, n_layers)
         hidden_dim = self._extend_for_multilayer(hidden_dim, n_layers)
-        assert len(kernel_size) == len(hidden_dim) == n_layers, 'Inconsistent list length.'
+        assert (
+            len(kernel_size) == len(hidden_dim) == n_layers
+        ), "Inconsistent list length."
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -721,30 +761,38 @@ class CropConvLSTM(nn.Module):
         self.input_len_monthly = input_len_monthly
         self.seq_len = seq_len
         self.input_len_static = input_len_static
-        
+
         cell_list = []
         for i in range(0, self.n_layers):
             cur_input_dim = self.input_dim if i == 0 else self.hidden_dim[i - 1]
 
-            cell_list.append(ConvLSTMCell(input_dim=cur_input_dim,
-                                        hidden_dim=self.hidden_dim[i],
-                                        kernel_size=self.kernel_size[i],
-                                        bias=self.bias))
+            cell_list.append(
+                ConvLSTMCell(
+                    input_dim=cur_input_dim,
+                    hidden_dim=self.hidden_dim[i],
+                    kernel_size=self.kernel_size[i],
+                    bias=self.bias,
+                )
+            )
         self.cell_list = nn.ModuleList(cell_list)
-        
+
         self.flatten = nn.Flatten()
         self.net = nn.Sequential(
-            nn.Linear(self.hidden_dim[0]*self.seq_len*self.input_len_monthly+self.input_len_static, self.hidden_dim[0]*self.seq_len),
-            nn.BatchNorm1d(self.hidden_dim[0]*self.seq_len),
+            nn.Linear(
+                self.hidden_dim[0] * self.seq_len * self.input_len_monthly
+                + self.input_len_static,
+                self.hidden_dim[0] * self.seq_len,
+            ),
+            nn.BatchNorm1d(self.hidden_dim[0] * self.seq_len),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(self.hidden_dim[0]*self.seq_len, self.seq_len),
+            nn.Linear(self.hidden_dim[0] * self.seq_len, self.seq_len),
             nn.BatchNorm1d(self.seq_len),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(self.seq_len, self.n_classes)
+            nn.Linear(self.seq_len, self.n_classes),
         )
-        
+
     def forward(self, input, hidden_state=None):
         """
         Args:
@@ -755,7 +803,9 @@ class CropConvLSTM(nn.Module):
         -------
         last_state_list, layer_output
         """
-        input_monthly = input[0][:, None, :, :]  #fictional dimension added. will be used as channnels
+        input_monthly = input[0][
+            :, None, :, :
+        ]  # fictional dimension added. will be used as channnels
         input_static = input[1]
         b = input_monthly.size()[0]
 
@@ -763,19 +813,21 @@ class CropConvLSTM(nn.Module):
         if hidden_state is not None:
             raise NotImplementedError()
         else:
-            hidden_state = self._init_hidden(batch_size=b, length=self.input_len_monthly)
+            hidden_state = self._init_hidden(
+                batch_size=b, length=self.input_len_monthly
+            )
 
         layer_output_list = []
         last_state_list = []
         cur_layer_input = input_monthly
 
         for layer_idx in range(self.n_layers):
-
             h, c = hidden_state[layer_idx]
             output_inner = []
             for t in range(self.seq_len):
-                h, c = self.cell_list[layer_idx](input = cur_layer_input[:, :, t, :],
-                                                cur_state=[h, c])
+                h, c = self.cell_list[layer_idx](
+                    input=cur_layer_input[:, :, t, :], cur_state=[h, c]
+                )
                 output_inner.append(h)
 
             layer_output = torch.stack(output_inner, dim=1)
@@ -788,7 +840,7 @@ class CropConvLSTM(nn.Module):
             layer_output_list = layer_output_list[-1:]
             last_state_list = last_state_list[-1:]
 
-        output_monthly = self.flatten(layer_output_list[0])        
+        output_monthly = self.flatten(layer_output_list[0])
         output = self.net(torch.cat((output_monthly, input_static), dim=1))
 
         return output
@@ -814,7 +866,7 @@ class CropConvLSTM(nn.Module):
 
 class CroplandDataModuleMLP(pl.LightningDataModule):
     """
-    This module defines a LightningDataModule class for loading and 
+    This module defines a LightningDataModule class for loading and
         preparing data for a Cropland classification model using MLP architecture.
     Args:
     X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
@@ -948,20 +1000,22 @@ class CropPL(pl.LightningModule):
         net: torch.nn.Module,
         num_classes=4,
         lr=1e-3,
-        weight_decay=0.03,
+        weight=None,
+        weight_decay=0.01,
     ):
         super().__init__()
         self.save_hyperparameters(logger=False, ignore=["net"])
         self.net = net
         self.lr = lr
+        self.weight = weight
         self.weight_decay = weight_decay
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(weight=self.weight)
         self.softmax = nn.Softmax()
 
         self.train_loss = torchmetrics.MeanMetric()
         self.val_loss = torchmetrics.MeanMetric()
         self.test_loss = torchmetrics.MeanMetric()
-        
+
         # for tracking best so far validation f1score
         self.val_F1Score_best = torchmetrics.MaxMetric()
 
@@ -976,37 +1030,48 @@ class CropPL(pl.LightningModule):
         )
 
         self.train_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.val_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes,  average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.test_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
 
         self.train_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.val_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.test_precision = torchmetrics.Precision(
             task="multiclass", num_classes=num_classes, average="macro"
         )
 
         self.train_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.val_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.test_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
 
         self.train_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.val_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
         self.test_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, average="macro")
+            task="multiclass", num_classes=num_classes, average="macro"
+        )
 
     def forward(self, x):
         return self.net(x)
-    
+
     def loss(self, y_hat, y):
         return self.criterion(y_hat, y)
 
@@ -1015,11 +1080,10 @@ class CropPL(pl.LightningModule):
         self.val_loss.reset()
         self.val_accuracy.reset()
         self.val_avg_precision.reset()
-        self.val_precision.reset() 
+        self.val_precision.reset()
         self.val_recall.reset()
         self.val_F1Score.reset()
         self.val_F1Score_best.reset()
-        
 
     def model_step(self, batch):
         features, ohe_targets = batch
@@ -1039,7 +1103,7 @@ class CropPL(pl.LightningModule):
             prog_bar=True,
             logger=True,
         )
-        
+
         # To account for Dropout behavior during evaluation
         self.net.eval()
         with torch.no_grad():
@@ -1064,7 +1128,7 @@ class CropPL(pl.LightningModule):
         self.log("train/AP", self.train_avg_precision, on_step=False, on_epoch=True)
         self.net.train()
         return {"loss": loss, "preds": preds, "target": target}
-    
+
     def on_train_epoch_end(self) -> None:
         pass
 
@@ -1073,7 +1137,7 @@ class CropPL(pl.LightningModule):
 
         self.val_loss(loss)
         self.val_accuracy(preds, target)
-        self.val_recall(preds, target)    
+        self.val_recall(preds, target)
         self.val_precision(preds, target)
         self.val_F1Score(preds, target)
         self.val_avg_precision(preds, target)
@@ -1088,11 +1152,13 @@ class CropPL(pl.LightningModule):
         self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
 
         return {"loss": loss, "preds": preds, "target": target}
-    
-    def on_validation_epoch_end(self): 
-        f1sc = self.val_F1Score.compute() # get current val f1score
-        self.val_F1Score_best(f1sc) # update best so far val f1score
-        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False) # sync_dist=True
+
+    def on_validation_epoch_end(self):
+        f1sc = self.val_F1Score.compute()  # get current val f1score
+        self.val_F1Score_best(f1sc)  # update best so far val f1score
+        self.log(
+            "val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False
+        )  # sync_dist=True
 
     def test_step(self, batch, batch_idx):
         loss, preds, target = self.model_step(batch)
@@ -1118,10 +1184,10 @@ class CropPL(pl.LightningModule):
         self.log("test/AP", self.test_avg_precision, on_step=False, on_epoch=True)
 
         return {"loss": loss, "preds": preds, "target": target}
-    
+
     def on_test_epoch_end(self) -> None:
         pass
-    
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay

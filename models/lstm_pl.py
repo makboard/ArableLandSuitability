@@ -25,16 +25,18 @@ from torch.utils.data import DataLoader
 
 # %%
 # Read dictionary pkl file
-with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR_RUS_ROS_lstm.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR_lstm.pkl"), "rb") as fp:
     X = pickle.load(fp)
 
-with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS_ROS_lstm.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_lstm.pkl"), "rb") as fp:
     y = pickle.load(fp)
 
+with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb") as fp:
+    normalized_weight = pickle.load(fp)
 
 # %%
 # initilize data module
-dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=256, num_workers=0)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -42,7 +44,7 @@ torch.manual_seed(142)
 random.seed(142)
 
 network = CropLSTM()
-model = CropPL(net=network, lr=1e-3)
+model = CropPL(net=network, lr=1e-3, weight=torch.FloatTensor(normalized_weight))
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
@@ -63,22 +65,19 @@ trainer = pl.Trainer(
 trainer.fit(model, dm)
 
 
-# %%
-# from model_utils import custom_multiclass_report
-
-# # check metrics
-# predictions = torch.cat(
-#     trainer.predict(model, DataLoader(dm.X_test, batch_size=128)), dim=0
-# )
-# softmax = nn.Softmax(dim=1)
-# yprob = softmax(predictions.float())
-# ypred = torch.argmax(yprob, 1)
-# ytest = torch.argmax(dm.y_test, 1).cpu().numpy()
-
-
-# print(custom_multiclass_report(ytest, ypred, yprob))
-
-# %%
+# %
 # Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "lstm_FR_RUS_ROS.pkl")
+model_filename = os.path.join("..", "results", "pickle_models", "lstm_FR.pkl")
 torch.save(model, model_filename)
+
+# %%
+# check metrics
+predictions = torch.cat(
+    trainer.predict(model, DataLoader(dm.X_test, batch_size=2048)), dim=0
+)
+softmax = nn.Softmax(dim=1)
+yprob = softmax(predictions.float())
+ypred = torch.argmax(yprob, 1)
+ytest = torch.argmax(dm.y_test, 1).cpu().numpy()
+
+print(custom_multiclass_report(ytest, ypred, yprob))

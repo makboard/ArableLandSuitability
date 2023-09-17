@@ -25,12 +25,14 @@ from torch.utils.data import DataLoader
 
 # %%
 # Read dictionary pkl file
-with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR_RUS.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR.pkl"), "rb") as fp:
     X = pickle.load(fp)
 
-with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_RUS.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR.pkl"), "rb") as fp:
     y = pickle.load(fp)
 
+with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb") as fp:
+    normalized_weight = pickle.load(fp)
 
 # %%
 # initilize data module
@@ -42,8 +44,8 @@ torch.manual_seed(142)
 random.seed(142)
 
 network = CropMLP()
-# network.initialize_bias_weights(dm.y_train.argmax(dim=1))
-model = CropPL(net=network, lr=1e-4)
+network.initialize_bias_weights(dm.y_train.argmax(dim=1))
+model = CropPL(net=network, lr=1e-3, weight=None)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
@@ -79,5 +81,5 @@ print(custom_multiclass_report(ytest, ypred, yprob))
 
 # %%
 # Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "mlp_FR_RUS_llr.pkl")
+model_filename = os.path.join("..", "results", "pickle_models", "mlp_FR.pkl")
 torch.save(model, model_filename)
