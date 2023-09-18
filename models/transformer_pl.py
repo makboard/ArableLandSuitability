@@ -37,7 +37,7 @@ with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb")
 
 # %%
 # initilize data module
-dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=128, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -68,13 +68,13 @@ trainer.fit(model, dm)
 
 # %%
 # Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "lstm_FR.pkl")
+model_filename = os.path.join("..", "results", "pickle_models", "transformer_FR.pkl")
 torch.save(model, model_filename)
 
 # %%
 # check metrics
 predictions = torch.cat(
-    trainer.predict(model, DataLoader(dm.X_test, batch_size=2048)), dim=0
+    trainer.predict(model, DataLoader((dm.X_monthly_test,dm.X_static_test), batch_size=2048)), dim=0
 )
 softmax = nn.Softmax(dim=1)
 yprob = softmax(predictions.float())

@@ -107,7 +107,7 @@ def downsample(X, y, oversampling=False, oversampling_strategy="ROS"):
     overSMOTE = SMOTE(random_state=42, n_jobs=-1)
     overROS = RandomOverSampler(random_state=42)
     under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]},
+        sampling_strategy={counter.most_common()[0][0]: 3 * counter.most_common()[1][1]},
         random_state=42,
     )
     # under = TomekLinks()

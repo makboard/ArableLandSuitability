@@ -36,7 +36,7 @@ with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb")
 
 # %%
 # initilize data module
-dm = CroplandDataModuleMLP(X=X, y=y, batch_size=8192, num_workers=0)
+dm = CroplandDataModuleMLP(X=X, y=y, batch_size=128, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")

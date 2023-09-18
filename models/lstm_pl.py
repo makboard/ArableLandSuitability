@@ -36,7 +36,7 @@ with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb")
 
 # %%
 # initilize data module
-dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=128, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -44,7 +44,7 @@ torch.manual_seed(142)
 random.seed(142)
 
 network = CropLSTM()
-model = CropPL(net=network, lr=1e-3, weight=torch.FloatTensor(normalized_weight))
+model = CropPL(net=network, lr=1e-3,) #weight=torch.FloatTensor(normalized_weight))
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
@@ -73,7 +73,7 @@ torch.save(model, model_filename)
 # %%
 # check metrics
 predictions = torch.cat(
-    trainer.predict(model, DataLoader(dm.X_test, batch_size=2048)), dim=0
+    trainer.predict(model, DataLoader((dm.X_monthly_test,dm.X_static_test), batch_size=2048)), dim=0
 )
 softmax = nn.Softmax(dim=1)
 yprob = softmax(predictions.float())
