@@ -31,20 +31,20 @@ with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR_lstm.pkl")
 with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR_lstm.pkl"), "rb") as fp:
     y = pickle.load(fp)
 
-with open(os.path.join("..", "data", "npys_data", "normalized_alpha.pkl"), "rb") as fp:
-    normalized_weight = pickle.load(fp)
+with open(os.path.join("..", "data", "npys_data", "alpha.pkl"), "rb") as fp:
+    weight = pickle.load(fp)
 
 # %%
 # initilize data module
-dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=128, num_workers=0)
+dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=64, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(142)
-random.seed(142)
+torch.manual_seed(42)
+random.seed(42)
 
 network = CropLSTM()
-model = CropPL(net=network, lr=1e-3,) #weight=torch.FloatTensor(normalized_weight))
+model = CropPL(net=network, lr=1e-3, weight=torch.FloatTensor(weight)) #weight=torch.FloatTensor(normalized_weight))
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
@@ -58,7 +58,7 @@ lr_monitor = LearningRateMonitor(logging_interval="epoch")
 trainer = pl.Trainer(
     max_epochs=500,
     accelerator="gpu",
-    devices=[1],    
+    devices=[0],    
     check_val_every_n_epoch=1,
     callbacks=[early_stop_callback, model_saving, lr_monitor, RichProgressBar()],
 )

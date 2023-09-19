@@ -5,7 +5,7 @@ import random
 import sys
 import warnings
 
-sys.path.append(os.path.join(".."))
+sys.path.append(os.path.join("/app/ArableLandSuitability/"))
 
 import pytorch_lightning as pl
 import torch
@@ -15,7 +15,11 @@ from src.model_utils import (
     CropMLP,
     CropPL,
 )
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, RichProgressBar
+from pytorch_lightning.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    RichProgressBar,
+)
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import nn
 from torch.utils.data import DataLoader
@@ -25,18 +29,30 @@ from torch.utils.data import DataLoader
 
 # %%
 # Read dictionary pkl file
-with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR.pkl"), "rb") as fp:
+with open(
+    os.path.join(
+        "/app/ArableLandSuitability/", "data", "processed_files", "pkls", "X_FR.pkl"
+    ),
+    "rb",
+) as fp:
     X = pickle.load(fp)
 
-with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR.pkl"), "rb") as fp:
+with open(
+    os.path.join(
+        "/app/ArableLandSuitability/", "data", "processed_files", "pkls", "y_FR.pkl"
+    ),
+    "rb",
+) as fp:
     y = pickle.load(fp)
 
-with open(os.path.join("..", "data", "npys_data", "alpha.pkl"), "rb") as fp:
+with open(
+    os.path.join("/app/ArableLandSuitability/", "data", "npys_data", "alpha.pkl"), "rb"
+) as fp:
     weight = pickle.load(fp)
 
 # %%
 # initilize data module
-dm = CroplandDataModuleMLP(X=X, y=y, batch_size=64, num_workers=0)
+dm = CroplandDataModuleMLP(X=X, y=y, batch_size=8192, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
@@ -51,9 +67,7 @@ model = CropPL(net=network, lr=1e-3, weight=torch.FloatTensor(weight))
 early_stop_callback = EarlyStopping(
     monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="min"
 )
-model_saving = ModelCheckpoint(
-        save_top_k=3, mode="max", monitor="val/F1Score"
-    )
+model_saving = ModelCheckpoint(save_top_k=3, mode="max", monitor="val/F1Score")
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 trainer = pl.Trainer(
@@ -63,13 +77,17 @@ trainer = pl.Trainer(
     check_val_every_n_epoch=1,
     callbacks=[early_stop_callback, model_saving, lr_monitor, RichProgressBar()],
 )
-trainer.fit(model, dm)
 
 
 # %%
 # check metrics
 predictions = torch.cat(
-    trainer.predict(model, DataLoader(dm.X_test, batch_size=2048)), dim=0
+    trainer.predict(
+        model,
+        DataLoader(dm.X_test, batch_size=2048),
+        ckpt_path="/app/ArableLandSuitability/models/lightning_logs/version_125/checkpoints/epoch=181-step=249886.ckpt",
+    ),
+    dim=0,
 )
 softmax = nn.Softmax(dim=1)
 yprob = softmax(predictions.float())
@@ -78,8 +96,3 @@ ytest = torch.argmax(dm.y_test, 1).cpu().numpy()
 
 
 print(custom_multiclass_report(ytest, ypred, yprob))
-
-# %%
-# Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "mlp_FR.pkl")
-torch.save(model, model_filename)
