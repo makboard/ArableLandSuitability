@@ -16,7 +16,7 @@ class crop_features:
         new object of the class
     """
 
-    def __init__(self, left, top, right, bottom, path_to_cropmask):
+    def __init__(self, left, top, right, bottom, path_to_source):
         p1 = geometry.Point(left, bottom)
         p2 = geometry.Point(left, top)
         p3 = geometry.Point(right, top)
@@ -26,7 +26,7 @@ class crop_features:
         self.poly = geometry.Polygon([i for i in pointList])
         
         # Read the cropmask file
-        with rasterio.open(path_to_cropmask) as src:
+        with rasterio.open(path_to_source) as src:
             cropped_image, cropped_transform = rasterio.mask.mask(src, [self.poly], crop=True)
 
         # Get the height and width of the cropped TIFF image
@@ -67,7 +67,7 @@ def average_10years_climate(path_climate, path_new, years, months, folders, name
             w = src.width
             h = src.height
             profile = src.profile
-            profile.update({"count": 12, "dtype": "float32", "nodata": None})
+            profile.update({"count": 12, "dtype": np.float32, "nodata": None})
 
         # Empty array to keep average  month values for 10 years
         array_avg = np.empty((h, w, 0))
@@ -80,15 +80,15 @@ def average_10years_climate(path_climate, path_new, years, months, folders, name
                     with rasterio.open(
                         path + folder + name_str + str(year) + "_" + month + ".tiff"
                     ) as src:
-                        array = np.dstack((array, src.read(1))).astype("float32")
+                        array = np.dstack((array, src.read(1))).astype(np.float32)
                 except rasterio.errors.RasterioIOError:  # type: ignore
                     with rasterio.open(
                         path + folder + name_str + str(year) + "_" + month + ".tif"
                     ) as src:
-                        array = np.dstack((array, src.read(1))).astype("float32")
+                        array = np.dstack((array, src.read(1))).astype(np.float32)
 
             # Calculate average over all years
-            array_avg = np.dstack((array_avg, np.mean(array, axis=2))).astype("float32")
+            array_avg = np.dstack((array_avg, np.mean(array, axis=2))).astype(np.float32)
 
         # Write the data to the output raster
         array_avg = array_avg.transpose(2, 0, 1)
@@ -139,7 +139,7 @@ def average_spi(path_climate, path_new, years, folders, name_str):
             profile.update(
                 {
                     "count": 1,
-                    # "dtype": "float64",
+                    "dtype": np.float32,
                     # "nodata": None
                 }
             )
@@ -158,7 +158,7 @@ def average_spi(path_climate, path_new, years, folders, name_str):
 
         # Write new tif
         with rasterio.open(path_new + folder + name_str + str(years[0]) + "_" + str(years[-1]) + ".tif", "w", **profile) as dst:  # type: ignore
-            dst.write(array_avg.astype("float32"), 1)
+            dst.write(array_avg.astype(np.float32), 1)
 
 
 def process_past_climate(path_climate, path_new, years):
@@ -321,17 +321,19 @@ def crop_tiff(path_src, path_dest, bound):
     print(len(files), "images croped")
 
 
-def reshape_tiff(path_src, path_dest, bound):
-    """Reshapes .tiff file and writes new one
+def reshape_tiff(path_src, path_dest, bound, interpolation="cubic"):
+    """Reshapes .tiff file and writes a new one with specified interpolation method.
 
     Parameters:
     --------
-        path_src: Callable[str]
+        path_src: str
             Source folder
-        path_dest: Callable[Dict]
+        path_dest: str
             Destination folder
-        bound: Callable[Object]
+        bound: object
             Transformation properties
+        interpolation: str, optional
+            Interpolation method ("nearest", "bilinear", "cubic", etc.)
 
     Returns:
     --------
@@ -342,9 +344,20 @@ def reshape_tiff(path_src, path_dest, bound):
     if not os.path.exists(path_dest):
         os.makedirs(path_dest)
 
-    # Apply those parameters for transformation
+    # Define the resampling method based on the user's choice
+    resampling_method = None
+    if interpolation == "nearest":
+        resampling_method = rasterio.enums.Resampling.nearest
+    elif interpolation == "bilinear":
+        resampling_method = rasterio.enums.Resampling.bilinear
+    elif interpolation == "cubic":
+        resampling_method = rasterio.enums.Resampling.cubic
+    elif interpolation == "mode":
+        resampling_method = rasterio.enums.Resampling.mode
+    # Add more options for other interpolation methods as needed
+
     for fname in tqdm(files):
-        filepath = path_src + fname
+        filepath = os.path.join(path_src, fname)
 
         with rasterio.open(filepath) as src:
             # Create a new cropped raster to write to
@@ -354,13 +367,15 @@ def reshape_tiff(path_src, path_dest, bound):
                     "height": bound.height,
                     "width": bound.width,
                     "transform": bound.transform,
+                    "dtype": np.float32,
                 }
             )
 
             with rasterio.open(path_dest + fname, "w", **profile) as dst:
-                # Read the data and write it to the output raster
-                dst.write(src.read())
-    print(len(files), "images reshaped")
+                # Read the data and write it to the output raster with the specified resampling method
+                dst.write(src.read(out_shape=(src.count, bound.height, bound.width), resampling=resampling_method))
+
+    print(len(files), "images reshaped with", interpolation, "interpolation")
 
 
 def rename_climate(path, ssps):
