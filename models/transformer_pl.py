@@ -49,8 +49,8 @@ dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(42)
-random.seed(42)
+torch.manual_seed(142)
+random.seed(142)
 
 network = CropTransformer()
 model = CropPL(net=network, lr=1e-3, weight=None)  # weight=torch.FloatTensor(weight))
@@ -65,7 +65,7 @@ lr_monitor = LearningRateMonitor(logging_interval="epoch")
 trainer = pl.Trainer(
     max_epochs=500,
     accelerator="gpu",
-    devices=[0],
+    devices=[3],
     check_val_every_n_epoch=1,
     callbacks=[early_stop_callback, model_saving, lr_monitor, RichProgressBar()],
 )

@@ -48,8 +48,8 @@ dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(144)
-random.seed(144)
+torch.manual_seed(142)
+random.seed(142)
 
 network = CropLSTM()
 model = CropPL(
