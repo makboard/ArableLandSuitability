@@ -10,6 +10,19 @@ from sklearn.metrics import (
     f1_score,
     precision_recall_curve,
 )
+import statistics as st
+
+
+def find_mode(window, axis=None, **kwargs):
+    # find the mode over all axes
+    uniq = np.unique(window, axis=0, return_counts=True)
+
+    ret = uniq[0][:, np.argmax(uniq[1]), ...]
+    uniq = np.unique(ret, axis=-1, return_counts=True)
+    ret = uniq[0][..., np.argmax(uniq[1])]
+    # ret = np.atleast_2d(ret)
+    # retmax = np.max(window, axis, **kwargs)
+    return ret
 
 
 def get_cmip(
@@ -31,6 +44,7 @@ def cmp(path_to_target, path_to_cmip):
 
 
 if __name__ == "__main__":
+    from_cmip_to_target = False
     cmip = get_cmip()
     print("Order of variables in cmip:")
     print(cmip.sector.data)
@@ -44,15 +58,35 @@ if __name__ == "__main__":
     target = target.rename({"y": "lat", "x": "lon"})
     target = target.squeeze()
     target.data = (target.data > 0).astype(int)
-    cmip_crops_inter = cmip_crops.interp(
-        lon=target.lon.data, lat=target.lat.data, method="linear"
-    )
+    lon_min, lon_max = target.lon.min().data, target.lon.max().data
+    lat_min, lat_max = target.lat.min().data, target.lat.max().data
+    if from_cmip_to_target:
+        cmip_crops = cmip_crops.interp(
+            lon=target.lon.data, lat=target.lat.data, method="linear"
+        )
+        cmip_crops = cmip_crops.reindex(lat=list(reversed(cmip_crops.lat)))
+    else:
+        cmip_crops = cmip_crops.sel(
+            lat=slice(lat_min - 1, lat_max + 1), lon=slice(lon_min - 1, lon_max + 1)
+        )
+        cmip_crops = cmip_crops.reindex(lat=list(reversed(cmip_crops.lat)))
+        lat_ratio = target.lat.data.shape[0] / cmip_crops.lat.data.shape[0]
+        lon_ratio = target.lon.data.shape[0] / cmip_crops.lon.data.shape[0]
+        target = (
+            target.coarsen(lat=int(lat_ratio), lon=int(lon_ratio), boundary="trim")
+            .max()
+            .astype(int)
+        )
+        # target = target.interp(
+        #     lon=cmip_crops.lon.data, lat=cmip_crops.lat.data, method="linear"
+        # )
+        pass
 
     tgt = target.data.flatten()
-    preds = cmip_crops_inter.data.flatten()
-    # precision, recall, thresholds = precision_recall_curve(tgt, preds)
-    # hmeans = 2 / (1 / recall[:-1] + 1 / precision[:-1])
-    th = 0.1  # thresholds[np.argmax(hmeans)]
+    preds = cmip_crops.data.flatten()
+    precision, recall, thresholds = precision_recall_curve(tgt, preds)
+    hmeans = 2 / (1 / recall[:-1] + 1 / precision[:-1])
+    th = thresholds[np.argmax(hmeans)]
     print("ROCAUC", roc_auc_score(tgt, preds))
     print("AP", average_precision_score(tgt, preds))
     print("Accuracy", accuracy_score(tgt, preds > th))

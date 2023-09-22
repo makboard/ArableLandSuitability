@@ -1215,6 +1215,10 @@ class CropPL(pl.LightningModule):
     def on_test_epoch_end(self) -> None:
         pass
 
+    def predict_step(self, batch, batch_idx):
+        features, targets = batch
+        return self(features), targets
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay
