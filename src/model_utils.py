@@ -3,10 +3,10 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
-# from imblearn.over_sampling import SMOTE
-# from imblearn.pipeline import Pipeline
-# from imblearn.under_sampling import RandomUnderSampler, TomekLinks
-# from imblearn.over_sampling import RandomOverSampler
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
+from imblearn.under_sampling import RandomUnderSampler, TomekLinks
+from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import (
     average_precision_score,
     precision_recall_curve,
@@ -1214,6 +1214,10 @@ class CropPL(pl.LightningModule):
 
     def on_test_epoch_end(self) -> None:
         pass
+
+    def predict_step(self, batch, batch_idx):
+        features, targets = batch
+        return self(features), targets
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(

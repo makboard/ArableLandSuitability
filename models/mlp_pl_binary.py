@@ -23,6 +23,15 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import nn
 from torch.utils.data import DataLoader
+from sklearn.metrics import (
+    average_precision_score,
+    roc_auc_score,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    precision_recall_curve,
+)
 
 # %% [markdown]
 # ### Read from file
@@ -86,13 +95,23 @@ trainer.fit(model, dm)
 
 # %%
 # check metrics
-predictions = torch.cat(
-    trainer.predict(model, DataLoader(dm.X_test, batch_size=2048)), dim=0
+dm.setup()
+predict_output = (
+    trainer.predict(
+        model,
+        DataLoader(dm.dataset_test, batch_size=2048),
+        ckpt_path="/app/ArableLandSuitability/models/lightning_logs/MLP_binary_2048/lightning_logs/version_1/checkpoints/epoch=99-step=66800.ckpt",
+    ),
 )
-path_preds = "/app/ArableLandSuitability/results/predictions/MLP_binary"
+preds_tuple, tgts_tuple = zip(*predict_output[0])
+predictions = torch.cat(
+    preds_tuple,
+    dim=0,
+)
+path_preds = "/app/ArableLandSuitability/results/predictions/" + experiment_name
 if not os.path.exists(path_preds):
     os.makedirs(path_preds)
-torch.save(predictions, path_preds)
+torch.save(predictions, os.path.join(path_preds, "preds.pt"))
 
 # %%
 # Save the module to a file
@@ -100,3 +119,26 @@ model_filename = os.path.join(
     "/app/ArableLandSuitability/", "results", "pickle_models", experiment_name + ".pkl"
 )
 torch.save(model, model_filename)
+
+softmax = nn.Softmax()
+preds = softmax(predictions)[:, 1].detach().cpu().numpy()
+tgt = predictions = (
+    torch.cat(
+        tgts_tuple,
+        dim=0,
+    )
+    .argmax(dim=1)
+    .detach()
+    .cpu()
+    .numpy()
+)
+precision, recall, thresholds = precision_recall_curve(tgt, preds)
+hmeans = 2 / (1 / recall[:-1] + 1 / precision[:-1])
+th = thresholds[hmeans.argmax()]
+print("ROCAUC", roc_auc_score(tgt, preds))
+print("AP", average_precision_score(tgt, preds))
+print("Accuracy", accuracy_score(tgt, preds > th))
+print("Precision", precision_score(tgt, preds > th))
+print("Recall", recall_score(tgt, preds > th))
+print("f1", f1_score(tgt, preds > th))
+pass
