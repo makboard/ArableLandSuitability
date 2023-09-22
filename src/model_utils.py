@@ -107,7 +107,9 @@ def downsample(X, y, oversampling=False, oversampling_strategy="ROS"):
     overSMOTE = SMOTE(random_state=42, n_jobs=-1)
     overROS = RandomOverSampler(random_state=42)
     under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: 3 * counter.most_common()[1][1]},
+        sampling_strategy={
+            counter.most_common()[0][0]: 3 * counter.most_common()[1][1]
+        },
         random_state=42,
     )
     # under = TomekLinks()
@@ -464,7 +466,7 @@ class CroplandDataModuleLSTM(pl.LightningDataModule):
             torch.LongTensor(y["Val"]),
             torch.LongTensor(y["Test"]),
         )
-        
+
         self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
 
     def prepare_data(self):
@@ -874,8 +876,18 @@ class CroplandDataModuleMLP(pl.LightningDataModule):
     batch_size (int): The batch size to be used for training and evaluation. Default is 128.
     """
 
-    def __init__(self, X: dict, y: dict, batch_size: int = 128, num_workers: int = 4):
+    def __init__(
+        self,
+        X: dict,
+        y: dict,
+        batch_size: int = 128,
+        num_workers: int = 4,
+        num_classes: int = 4,
+    ):
         super().__init__()
+        assert (num_classes == 4) or (
+            num_classes == 2
+        ), "Only 4 or 2 classes are supported"
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.X_train, self.X_val, self.X_test = (
@@ -883,11 +895,26 @@ class CroplandDataModuleMLP(pl.LightningDataModule):
             torch.FloatTensor(X["Val"]),
             torch.FloatTensor(X["Test"]),
         )
-        self.y_train, self.y_val, self.y_test = (
-            torch.LongTensor(y["Train"]),
-            torch.LongTensor(y["Val"]),
-            torch.LongTensor(y["Test"]),
-        )
+        if num_classes == 4:
+            self.y_train, self.y_val, self.y_test = (
+                torch.LongTensor(y["Train"]),
+                torch.LongTensor(y["Val"]),
+                torch.LongTensor(y["Test"]),
+            )
+        elif num_classes == 2:
+            self.y_train, self.y_val, self.y_test = (
+                torch.ShortTensor(
+                    np.stack(
+                        (y["Train"][:, 0], y["Train"][:, 1:].sum(axis=-1)), axis=-1
+                    )
+                ),
+                torch.ShortTensor(
+                    np.stack((y["Val"][:, 0], y["Val"][:, 1:].sum(axis=-1)), axis=-1)
+                ),
+                torch.ShortTensor(
+                    np.stack((y["Test"][:, 0], y["Test"][:, 1:].sum(axis=-1)), axis=-1)
+                ),
+            )
 
         self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
 
