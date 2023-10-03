@@ -44,26 +44,26 @@ with open(os.path.join("..", "data", "npys_data", "alpha.pkl"), "rb") as fp:
 
 # %%
 # initilize data module
-dm = CroplandDataModuleMLP(X=X, y=y, batch_size=8192, num_workers=0)
+dm = CroplandDataModuleMLP(X=X, y=y, batch_size=16384, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(142)
-random.seed(142)
+torch.manual_seed(111)
+random.seed(111)
 
 network = CropMLP()
 network.initialize_bias_weights(dm.y_train.argmax(dim=1))
-model = CropPL(net=network, lr=1e-3, weight=None)
+model = CropPL(net=network, lr=5e-3, weight=None)
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="min"
+    monitor="val/F1Score", min_delta=1e-3, patience=50, verbose=True, mode="max"
 )
 model_saving = ModelCheckpoint(save_top_k=3, mode="max", monitor="val/F1Score")
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 trainer = pl.Trainer(
-    max_epochs=500,
+    max_epochs=2,
     accelerator="gpu",
     devices=[2],
     check_val_every_n_epoch=1,
@@ -71,6 +71,10 @@ trainer = pl.Trainer(
 )
 trainer.fit(model, dm)
 
+# %%
+# Save the module to a file
+model_filename = os.path.join("..", "results", "pickle_models", "mlp_FR1.pkl")
+torch.save(model, model_filename)
 
 # %%
 # check metrics
@@ -84,8 +88,3 @@ ytest = torch.argmax(dm.y_test, 1).cpu().numpy()
 
 
 print(custom_multiclass_report(ytest, ypred, yprob))
-
-# %%
-# Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "mlp_FR.pkl")
-torch.save(model, model_filename)

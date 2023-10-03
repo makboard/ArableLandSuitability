@@ -48,8 +48,8 @@ dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
 # %% [markdown]
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(142)
-random.seed(142)
+torch.manual_seed(21)
+random.seed(21)
 
 network = CropConvLSTM(
     input_dim=1,  # fictional dimension. will be used as channnels
@@ -64,11 +64,11 @@ network = CropConvLSTM(
     return_all_layers=False,
 )
 
-model = CropPL(net=network, lr=1e-3)  # weight=torch.FloatTensor(weight))
+model = CropPL(net=network, lr=5e-3)  # weight=torch.FloatTensor(weight))
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="min"
+    monitor="val/F1Score", min_delta=1e-3, patience=50, verbose=True, mode="max"
 )
 model_saving = ModelCheckpoint(save_top_k=3, mode="max", monitor="val/F1Score")
 lr_monitor = LearningRateMonitor(logging_interval="epoch")

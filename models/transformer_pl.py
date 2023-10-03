@@ -49,15 +49,15 @@ dm = CroplandDataModuleLSTM(X=X, y=y, batch_size=8192, num_workers=0)
 
 # initilize model
 warnings.filterwarnings("ignore")
-torch.manual_seed(142)
-random.seed(142)
+torch.manual_seed(42)
+random.seed(42)
 
 network = CropTransformer()
 model = CropPL(net=network, lr=1e-3, weight=None)  # weight=torch.FloatTensor(weight))
 
 # initilize trainer
 early_stop_callback = EarlyStopping(
-    monitor="val/loss", min_delta=1e-3, patience=50, verbose=True, mode="min"
+    monitor="val/F1Score", min_delta=1e-3, patience=50, verbose=True, mode="max"
 )
 model_saving = ModelCheckpoint(save_top_k=3, mode="max", monitor="val/F1Score")
 lr_monitor = LearningRateMonitor(logging_interval="epoch")
@@ -74,7 +74,7 @@ trainer.fit(model, dm)
 
 # %%
 # Save the module to a file
-model_filename = os.path.join("..", "results", "pickle_models", "transformer_FR.pkl")
+model_filename = os.path.join("..", "results", "pickle_models", "transformer_FR2.pkl")
 torch.save(model, model_filename)
 
 # # %%
