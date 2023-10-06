@@ -1,5 +1,6 @@
 import warnings
 from collections import Counter
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,7 +28,6 @@ from sklearn.metrics import classification_report, confusion_matrix, roc_auc_sco
 from torch import nn
 from torch.utils.data.sampler import WeightedRandomSampler
 from torch.utils.data import DataLoader, TensorDataset, Dataset
-import torch.nn.functional as F
 
 
 def roc_auc_score_multiclass(actual_class, prob, le=None):
@@ -258,7 +258,7 @@ def get_all_roc_coordinates(y_real, y_proba):
     return tpr_list, fpr_list
 
 
-def custom_multiclass_report(y_test, y_pred, y_prob):
+def custom_multiclass_report(y_test, y_pred, y_prob, path_to_save=None):
     """Custom multiclass report which consist of:
     - classification report (Sklearn)
     - confusion matrix
@@ -270,9 +270,15 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
         y_test (ArrayLike): actual values
         y_pred (ArrayLike): predicted values
         y_prob (ArrayLike): class probabilities for each sample
+        path_to_save (str): Defaults to None. If not None saves figures to the path provided
     """
 
-    print(classification_report(y_test, y_pred))
+    # print(classification_report(y_test, y_pred))
+    rep = classification_report(y_test, y_pred, output_dict=True)
+    df = pd.DataFrame(rep).transpose()
+    print(df)
+    if path_to_save is not None:
+        df.to_csv(os.path.join(path_to_save, 'metrics.csv'), index=True)
 
     # -----------------------------------------------------
     # Plot confusion matrix
@@ -291,10 +297,14 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
     plt.title("Confusion Matrix")
     plt.xlabel("Predicted class")
     plt.ylabel("Actual class")
-    plt.show()
+    if path_to_save is not None:
+        plt.savefig(os.path.join(path_to_save, "confusion_matrix.png"))
+    else:
+        plt.show()
     # -----------------------------------------------------
 
     # precision recall curve
+    plt.figure(figsize=(10, 5))
     precision = dict()
     recall = dict()
     classes = np.unique(y_test)
@@ -316,10 +326,14 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
     plt.ylabel("precision")
     plt.legend(loc="best")
     plt.title("precision vs. recall curve")
-    plt.show()
+    if path_to_save is not None:
+        plt.savefig(os.path.join(path_to_save, "PR_curve.png"))
+    else:
+        plt.show()
     # -----------------------------------------------------
 
     # roc curve
+    plt.figure(figsize=(10, 5))
     fpr = dict()
     tpr = dict()
     for i in range(len(set(y_test))):
@@ -332,7 +346,10 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
     plt.ylabel("true positive rate")
     plt.legend(loc="best")
     plt.title("ROC curve")
-    plt.show()
+    if path_to_save is not None:
+        plt.savefig(os.path.join(path_to_save, "ROC_curve.png"))
+    else:
+        plt.show()
     # -----------------------------------------------------
 
     # Plots the Probability Distributions and the ROC Curves One vs Rest
@@ -369,7 +386,10 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
     print(f"average ROC AUC OvR: {avg_roc_auc/i:.4f}")
 
     plt.tight_layout()
-    plt.show()
+    if path_to_save is not None:
+        plt.savefig(os.path.join(path_to_save, "ROC_AUC_OvR.png"))
+    else:
+        plt.show()
     # -----------------------------------------------------
 
     # Plots the Probability Distributions and the ROC Curves One vs ONe
@@ -409,7 +429,10 @@ def custom_multiclass_report(y_test, y_pred, y_prob):
         ax.set_xlabel(f"P(x = {c1})")
         # Calculates the ROC AUC OvO
         roc_auc_ovo[title] = roc_auc_score(df_aux["class"], df_aux["prob"])
-
+    if path_to_save is not None:
+        plt.savefig(os.path.join(path_to_save, "ROC_AUC_OvO_distr.png"))
+    else:
+        plt.show()
     avg_roc_auc = 0
     i = 0
     for k in roc_auc_ovo:
@@ -427,7 +450,7 @@ class CroplandDataset(Dataset):
         self.y = y
 
     def __len__(self):
-        return len(self.y)
+        return len(self.X_monthly)
 
     def __getitem__(self, idx):
         x_monthly = self.X_monthly[idx]
@@ -435,6 +458,17 @@ class CroplandDataset(Dataset):
         target = self.y[idx]
 
         return (x_monthly, x_static), target
+
+
+class CroplandDatasetPredict(CroplandDataset):
+    def __init__(self, X):
+        super().__init__(X, None)
+
+    def __getitem__(self, idx):
+        x_monthly = self.X_monthly[idx]
+        x_static = self.X_static[idx]
+
+        return (x_monthly, x_static)
 
 
 class CroplandDataModuleLSTM(pl.LightningDataModule):
@@ -727,16 +761,16 @@ class CropConvLSTM(nn.Module):
 
     def __init__(
         self,
-        input_dim: int,
-        hidden_dim: int,
-        kernel_size: tuple,
-        n_layers: int,
-        n_classes: int,
-        input_len_monthly: int,
-        seq_len: int,
-        input_len_static: int,
-        bias: bool = True,
-        return_all_layers: bool = False,
+        input_dim=1,
+        hidden_dim=16,
+        kernel_size=(3,),
+        n_layers=1,
+        n_classes=4,
+        input_len_monthly=10,
+        seq_len=12,
+        input_len_static=44,
+        bias=True,
+        return_all_layers=False,
     ) -> None:
         super(CropConvLSTM, self).__init__()
 
