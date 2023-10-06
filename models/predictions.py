@@ -15,7 +15,12 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from src.model_utils import Crop_LSTM, Crop_MLP, Crop_PL, reshape_data
+from src.model_utils import (CropLSTM,
+                            CropConvLSTM,
+                            CropMLP,
+                            CropTransformer,
+                            CropPL,
+                            reshape_data)
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -62,10 +67,10 @@ def make_predictions(X, clf_dict):
     y_probs = dict()
 
     for model in tqdm(clf_dict):
-        if model == "MLP":
-            network = Crop_MLP()
+        if model == "mlp":
+            network = CropMLP()
             checkpoint = torch.load(clf_dict[model])
-            loaded_model = Crop_PL(net=network)
+            loaded_model = CropPL(net=network)
             loaded_model.load_state_dict(checkpoint["state_dict"])
             loaded_model.eval()
 
@@ -87,9 +92,9 @@ def make_predictions(X, clf_dict):
             y_probs[model] = y_prob
 
         elif model == "lstm":
-            network = Crop_LSTM()
+            network = CropLSTM()
             checkpoint = torch.load(clf_dict[model])
-            loaded_model = Crop_PL(net=network)
+            loaded_model = CropPL(net=network)
             loaded_model.load_state_dict(checkpoint["state_dict"])
             loaded_model.eval()
 
@@ -110,6 +115,57 @@ def make_predictions(X, clf_dict):
             softmax = nn.Softmax(dim=1)
             y_prob = softmax(predictions.float()).numpy()
             y_probs[model] = y_prob
+
+        elif model == "transformer":
+            network = CropConvLSTM()
+            checkpoint = torch.load(clf_dict[model])
+            loaded_model = CropPL(net=network)
+            loaded_model.load_state_dict(checkpoint["state_dict"])
+            loaded_model.eval()
+
+            # create an instance of pl.Trainer
+            trainer = pl.Trainer(gpus=1)
+
+            # check metrics
+            predictions = torch.cat(
+                trainer.predict(
+                    loaded_model,
+                    DataLoader(
+                        torch.tensor(reshape_data(X), dtype=torch.float),
+                        batch_size=2048,
+                    ),
+                ),
+                dim=0,
+            )
+            softmax = nn.Softmax(dim=1)
+            y_prob = softmax(predictions.float()).numpy()
+            y_probs[model] = y_prob
+
+        elif model == "conv_lstm":
+            network = CropConvLSTM()
+            checkpoint = torch.load(clf_dict[model])
+            loaded_model = CropPL(net=network)
+            loaded_model.load_state_dict(checkpoint["state_dict"])
+            loaded_model.eval()
+
+            # create an instance of pl.Trainer
+            trainer = pl.Trainer(gpus=1)
+
+            # check metrics
+            predictions = torch.cat(
+                trainer.predict(
+                    loaded_model,
+                    DataLoader(
+                        torch.tensor(reshape_data(X), dtype=torch.float),
+                        batch_size=2048,
+                    ),
+                ),
+                dim=0,
+            )
+            softmax = nn.Softmax(dim=1)
+            y_prob = softmax(predictions.float()).numpy()
+            y_probs[model] = y_prob
+        
 
         else:
             # loading the models:
@@ -148,9 +204,7 @@ for path in tqdm(glob.glob(os.path.join(pathFeatures, "*.npy"))):
     # Saving results:
     file_name = path.split("/")[-1]  # get the file name from the path
     ssp = file_name.split("_")[1]  # get sspXXX from the file name
-    geo_model = file_name.split("_")[2].split(".")[
-        0
-    ]  # get MRI/CNRM/CMCC from the file name
+    geo_model = file_name.split("_")[2].split(".")[0]  # get MRI/CNRM/CMCC from the file name
 
     for model in probabilities:
         with open(

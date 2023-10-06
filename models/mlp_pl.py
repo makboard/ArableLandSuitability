@@ -87,4 +87,4 @@ ypred = torch.argmax(yprob, 1)
 ytest = torch.argmax(dm.y_test, 1).cpu().numpy()
 
 
-print(custom_multiclass_report(ytest, ypred, yprob))
+custom_multiclass_report(ytest, ypred, yprob)
