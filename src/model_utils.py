@@ -278,7 +278,7 @@ def custom_multiclass_report(y_test, y_pred, y_prob, path_to_save=None):
     df = pd.DataFrame(rep).transpose()
     print(df)
     if path_to_save is not None:
-        df.to_csv(os.path.join(path_to_save, 'metrics.csv'), index=True)
+        df.to_csv(os.path.join(path_to_save, "metrics.csv"), index=True)
 
     # -----------------------------------------------------
     # Plot confusion matrix
@@ -458,6 +458,21 @@ class CroplandDataset(Dataset):
         target = self.y[idx]
 
         return (x_monthly, x_static), target
+
+
+class CroplandDatasetTest(Dataset):
+    def __init__(self, X):
+        self.X_monthly = X[0]
+        self.X_static = X[1]
+
+    def __len__(self):
+        return len(self.X_monthly)
+
+    def __getitem__(self, idx):
+        x_monthly = self.X_monthly[idx]
+        x_static = self.X_static[idx]
+
+        return (x_monthly, x_static)
 
 
 class CroplandDatasetPredict(CroplandDataset):
@@ -1248,10 +1263,6 @@ class CropPL(pl.LightningModule):
 
     def on_test_epoch_end(self) -> None:
         pass
-
-    # def predict_step(self, batch, batch_idx):
-    #     features, targets = batch
-    #     return self(features), targets
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(

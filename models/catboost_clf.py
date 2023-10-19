@@ -1,4 +1,3 @@
-# %%
 import os
 import pickle
 
@@ -9,23 +8,18 @@ from optuna.integration import CatBoostPruningCallback
 from catboost import CatBoostClassifier
 from sklearn.metrics import f1_score
 
-
-# %%
 # Read dictionary pkl file
-with open(os.path.join("..", "data", "processed_files", "pkls", "X_FR.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "X.pkl"), "rb") as fp:
     X = pickle.load(fp)
 
-with open(os.path.join("..", "data", "processed_files", "pkls", "y_FR.pkl"), "rb") as fp:
+with open(os.path.join("..", "data", "processed_files", "pkls", "y.pkl"), "rb") as fp:
     y = pickle.load(fp)
 
-
-# %%
 # Assuming you have X_train, y_train, X_val, and y_val defined
 X_train, X_val, X_test = (X[key] for key in X.keys())
 y_train, y_val, y_test = (y[key].argmax(axis=1) for key in y.keys())
 
 
-# %%
 def objective(trial):
     param = {
         "objective": "MultiClass",
@@ -70,7 +64,6 @@ def objective(trial):
     return f1
 
 
-# %%
 study = optuna.create_study(
         pruner=optuna.pruners.MedianPruner(n_warmup_steps=5), direction="maximize"
     )
@@ -83,7 +76,6 @@ print("Best Parameters:", best_params)
 print("Best Weighted F1-score:", best_f1)
 
 
-# %%
 best_model = CatBoostClassifier(
     **best_params, verbose=True
 )
@@ -92,8 +84,8 @@ test_pred = best_model.predict(X_test)
 test_f1 = f1_score(y_test, test_pred, average="macro")
 print("Test macro F1-score:", test_f1)
 
-# %%
+
 # Save the trained model to a file
-model_filename = os.path.join("..", "results", "pickle_models", "catboost_optimized_FR.pkl")
+model_filename = os.path.join("..", "results", "pickle_models", "catboost.pkl")
 best_model.save_model(model_filename)
 print("Model saved as:", model_filename)
