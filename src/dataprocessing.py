@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 from osgeo import gdal
 from tqdm import tqdm
+from collections import OrderedDict
 
+np.random.seed(0)
 
 def get_file_paths(path_to_data: str, feature_names: list):
     """
@@ -63,12 +65,12 @@ def dataset_to_np(
 
 def get_nps_(file_path):  # IGRAN PROJECT
     # open gdal files
-    dsets = {}
+    dsets = OrderedDict()
     for i in file_path:
         dset = gdal.Open(i)
         dsets[Path(i).stem] = dset
     # reading into np, scaling in accordance with terraclim provided
-    nps = {}
+    nps = OrderedDict()
     for fn in tqdm(dsets.keys()):
         np_tmp = dataset_to_np(
             dsets[fn],
@@ -185,7 +187,7 @@ def get_target_data(path_to_raw_data, path_to_processed_data):
 def get_features_data(path_to_raw_data, path_to_processed_data_folder):
     for key in path_to_raw_data:
         # Define file paths:
-        file_path = glob.glob(os.path.join(path_to_raw_data[key], "*.tif"))
+        file_path = sorted(glob.glob(os.path.join(path_to_raw_data[key], "*.tif")))
 
         if not os.path.exists(path_to_processed_data_folder):
             os.makedirs(path_to_processed_data_folder)
@@ -195,7 +197,7 @@ def get_features_data(path_to_raw_data, path_to_processed_data_folder):
             os.path.join(path_to_processed_data_folder, "features_" + key + ".npy"),
             "wb",
         ) as f:
-            Features_dict = dict()
+            Features_dict = OrderedDict()
             # Get initial data
             data = get_nps_(file_path)
 
