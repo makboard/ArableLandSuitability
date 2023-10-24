@@ -6,8 +6,12 @@ import numpy as np
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.metrics import (average_precision_score, precision_recall_curve,
-                             roc_auc_score, roc_curve)
+from sklearn.metrics import (
+    average_precision_score,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
+)
 from sklearn.preprocessing import label_binarize
 
 warnings.filterwarnings("ignore")
@@ -18,78 +22,68 @@ import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torchmetrics
-from sklearn.metrics import (classification_report, confusion_matrix,
-                             roc_auc_score)
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+from typing import List, Dict, Optional, Union, Any, Tuple
 
 
-def roc_auc_score_multiclass(actual_class, prob, le=None):
+def roc_auc_score_multiclass(
+    actual_class: List[int], prob: List[List[float]], le: Optional[LabelEncoder] = None
+) -> Dict[Union[int, str], float]:
     """Calculate OvR roc_auc score for multiclass case
 
     Args:
-        actual_class (ArrayLike): array of actual classes
-        prob (ArrayLike): class probabilities for each sample
+        actual_class (List[int]): array of actual classes
+        prob (List[List[float]]): class probabilities for each sample
         le (LabelEncoder, optional): LabelEncoder for classes if needed. Defaults to None.
 
     Returns:
-        dict: key -- class label; value -- OvR roc_auc score
+        Dict[Union[int, str], float]: key -- class label; value -- OvR roc_auc score
     """
     # creating a set of all the unique classes using the actual class list
     unique_class = list(set(actual_class))
-    roc_auc_dict = {}
-    for i in range(len(unique_class)):
-        # creating a list of all the classes except the current class
-        other_class = [x for x in unique_class if x != unique_class[i]]
+    roc_auc_dict: Dict[Union[int, str], float] = {}
 
+    for per_class in unique_class:
         # marking the current class as 1 and all other classes as 0
-        new_actual_class = [0 if x in other_class else 1 for x in actual_class]
-        new_prob = prob[:, i]
+        new_actual_class = [1 if x == per_class else 0 for x in actual_class]
+        new_prob = prob[:, unique_class.index(per_class)]
 
         # using the sklearn metrics method to calculate the roc_auc_score
         roc_auc = roc_auc_score(new_actual_class, new_prob)
 
         if le is None:
-            roc_auc_dict[[unique_class[i]][0]] = roc_auc
+            roc_auc_dict[per_class] = roc_auc
         else:
-            roc_auc_dict[le.inverse_transform([unique_class[i]])[0]] = roc_auc
+            roc_auc_dict[le.inverse_transform([per_class])[0]] = roc_auc
 
     return roc_auc_dict
 
 
-def get_unique_values(data):
-    """Generate sorted unique values of the dataset
-
-    Args:
-        data (ArrayLike): initial data
-
-    Returns:
-        list: list of tuples with counts for each unique value
-    """
-    # get unique values and counts of each value
-    unique, counts = np.unique(data, return_counts=True)
-    unique = list((x for x in unique))
-    # display unique values and counts side by side
-    values = []
-    for i in range(len(unique)):
-        values.append(tuple([unique[i], counts[i]]))
-    values.sort(key=lambda tup: tup[1])
-    return values
-
-
-def downsample(X, y, oversampling=False):
+def downsample(
+    X: Union[List[List[Union[int, float]]], np.ndarray],
+    y: Union[List[Union[int, float]], np.ndarray],
+    oversampling: bool = False,
+) -> Tuple[
+    Union[List[List[Union[int, float]]], np.ndarray],
+    Union[List[Union[int, float]], np.ndarray],
+]:
     """Downsample the most frequent class to the second frequent one
-    and optionally oversample the rest classes
-    Downsampling is performed by RandomUnderSampler
-    Oversampling is performed by SMOTE
+    and optionally oversample the rest classes.
+    Downsampling is performed by RandomUnderSampler.
+    Oversampling is performed by SMOTE.
+
     Args:
-        X (DataFrame or ArrayLike): Initial features
-        y (DataFrame or ArrayLike): Initial target variable
-        oversampling (bool, optional): If True, oversampling is preformed
+        X (Union[List[List[Union[int, float]]], np.ndarray]): Initial features.
+        y (Union[List[Union[int, float]], np.ndarray]): Initial target variable.
+        oversampling (bool, optional): If True, oversampling is performed
         for the rest classes. Defaults to False.
 
     Returns:
-        X, y: downsampled dataset
+        Tuple[Union[List[List[Union[int, float]]], np.ndarray], Union[List[Union[int, float]], np.ndarray]]:
+        Downsampled dataset.
     """
 
     # Define classes distribution
@@ -99,16 +93,17 @@ def downsample(X, y, oversampling=False):
 
     # Define over- and undersampling strategies
     over = SMOTE(random_state=42, n_jobs=-1)
+    most_common_class, most_common_count = counter.most_common()[0]
+    second_most_common_count = counter.most_common()[1][1]
+
     under = RandomUnderSampler(
-        sampling_strategy={counter.most_common()[0][0]: counter.most_common()[1][1]}, # type: ignore
-        random_state=42,
+        sampling_strategy={most_common_class: second_most_common_count}, random_state=42
     )
 
     # Define pipeline steps
+    steps = [("u", under)]
     if oversampling:
-        steps = [("u", under), ("o", over)]
-    else:
-        steps = [("u", under)]
+        steps.append(("o", over))
     pipeline = Pipeline(steps=steps)
 
     # transform the dataset
@@ -122,33 +117,28 @@ def downsample(X, y, oversampling=False):
     return X, y
 
 
-def drop_classes(X, y, classes_to_drop: list):
-    """Drop specified classes from a dataset
+def get_feature_lists(X: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Get lists of monthly and static features.
 
     Args:
-        X (DataFrame or ArrayLike): Initial features
-        y (DataFrame or ArrayLike): Initial target variable
-        classes_to_drop (list): List of classes to drop.
+        X (pd.DataFrame): Initial features
 
     Returns:
-        X, y: modified dataset
+        Tuple[List[str], List[str]]: Lists of monthly and static features
     """
-    X["target"] = y
-    # Drop some classes from the data
-    for i in range(len(classes_to_drop)):
-        if np.isnan(classes_to_drop[i]):
-            X = X.drop(X.index[np.isnan(X["target"])])
-        else:
-            X = X.drop(X.index[X["target"] == classes_to_drop[i]])
-    # Updating target variable
-    y = X["target"]
-    # Drop target data from Features dataset
-    X.drop("target", axis=1, inplace=True)
+    static_keywords = ["DEM", "morf", "12m_SPI"]
 
-    return X, y
+    list_of_monthly_features = [
+        x for x in X.columns if not any(keyword in x for keyword in static_keywords)
+    ]
+    list_of_static_features = [
+        x for x in X.columns if any(keyword in x for keyword in static_keywords)
+    ]
+
+    return list_of_monthly_features, list_of_static_features
 
 
-def reshape_data(X):
+def reshape_data(X: pd.DataFrame) -> np.ndarray:
     """Prepare dataset in shape (N, num_of_monthly + num_of_static, 12)
     N - number of samples
     num_of_monthly - number of monthly features
@@ -156,45 +146,35 @@ def reshape_data(X):
     12 - number of months
 
     Args:
-        X (DataFrame): Initial features
+        X (pd.DataFrame): Initial features
 
     Returns:
-        ndarray: Modified dataset
+        np.ndarray: Modified dataset
     """
+    list_of_monthly_features, list_of_static_features = get_feature_lists(X)
 
-    # Create list of monthly features
-    list_of_monthly_features = [
-        x for x in X.keys() if not any(elem in x for elem in ["DEM", "morf", "12m_SPI"])
-    ]
-    # Create list of static features
-    list_of_static_features = [
-        x for x in X.keys() if any(elem in x for elem in ["DEM", "morf", "12m_SPI"])
-    ]
-    # Create separate DataFrames for monthly and static features
-    X_monthly = X.drop(columns=list_of_static_features)
-    X_static = X.drop(columns=list_of_monthly_features)
-    # Reshape monthly features
-    X_tmp = X_monthly.to_numpy().reshape(
-        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12
-    )
-    # Create an empty output ndarray
-    X_new = np.empty(
-        (
-            X_monthly.shape[0],
-            12,
-            len(list_of_monthly_features) // 12 + len(list_of_static_features),
-        )
-    )
-    # Fill the output ndarray.
-    for i in range(12):
-        X_new[:, i, :] = np.concatenate([X_tmp[:, :, i], X_static.to_numpy()], axis=1)
+    X_monthly = X[list_of_monthly_features]
+    X_static = X[list_of_static_features].to_numpy()
+
+    num_samples = X_monthly.shape[0]
+    num_monthly = len(list_of_monthly_features) // 12
+    num_static = len(list_of_static_features)
+
+    X_monthly_reshaped = X_monthly.to_numpy().reshape(num_samples, num_monthly, 12)
+
+    # Create an empty output ndarray and fill it
+    X_new = np.empty((num_samples, 12, num_monthly + num_static))
+    X_new[:, :, :num_monthly] = X_monthly_reshaped
+    X_new[:, :, num_monthly:] = X_static[:, np.newaxis, :]
 
     return X_new
 
 
-def calculate_tpr_fpr(y_real, y_pred):
+def calculate_tpr_fpr(
+    y_real: Union[List[int], np.ndarray], y_pred: Union[List[int], np.ndarray]
+) -> Tuple[float, float]:
     """
-    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr) based on real and predicted observations
+    Calculates the True Positive Rate (tpr) and the True Negative Rate (fpr) based on real and predicted observations.
 
     Args:
         y_real: The list or series with the real classes
@@ -207,382 +187,665 @@ def calculate_tpr_fpr(y_real, y_pred):
 
     # Calculates the confusion matrix and recover each element
     cm = confusion_matrix(y_real, y_pred)
+    if cm.shape != (2, 2):  # Ensure binary classification
+        raise ValueError("This function is designed for binary classification only.")
+
     TN = cm[0, 0]
     FP = cm[0, 1]
     FN = cm[1, 0]
     TP = cm[1, 1]
 
-    # Calculates tpr and fpr
-    tpr = TP / (TP + FN)  # sensitivity - true positive rate
-    fpr = 1 - TN / (TN + FP)  # 1-specificity - false positive rate
+    # Avoiding zero division
+    denominator_tpr = TP + FN
+    denominator_fpr = TN + FP
+
+    tpr = TP / denominator_tpr if denominator_tpr != 0 else 0.0
+    fpr = 1 - (TN / denominator_fpr) if denominator_fpr != 0 else 0.0
 
     return tpr, fpr
 
 
-def get_all_roc_coordinates(y_real, y_proba):
+def get_all_roc_coordinates(
+    y_real: Union[List[int], np.ndarray], y_proba: Union[List[float], np.ndarray]
+) -> Tuple[List[float], List[float]]:
     """
-    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point as a threshold for the predicion of the class.
+    Calculates all the ROC Curve coordinates (tpr and fpr) by considering each point as a threshold for the prediction of the class.
 
     Args:
         y_real: The list or series with the real classes.
-        y_proba: The array with the probabilities for each class, obtained by using the `.predict_proba()` method.
+        y_proba: The array with the probabilities for the positive class, usually obtained using the `.predict_proba()` method.
 
     Returns:
         tpr_list: The list of TPRs representing each threshold.
         fpr_list: The list of FPRs representing each threshold.
     """
-    tpr_list = [0]
-    fpr_list = [0]
-    for i in range(len(y_proba)):
-        threshold = y_proba[i]
-        y_pred = y_proba >= threshold
-        tpr, fpr = calculate_tpr_fpr(y_real, y_pred)
-        tpr_list.append(tpr)
-        fpr_list.append(fpr)
-    return tpr_list, fpr_list
+
+    if y_proba.ndim > 1 and y_proba.shape[1] > 1:
+        # Assuming binary classification and probabilities are in the second column
+        y_proba = y_proba[:, 1]
+
+    fpr_list, tpr_list, _ = roc_curve(y_real, y_proba)
+
+    return list(tpr_list), list(fpr_list)
 
 
-def custom_multiclass_report(y_test, y_pred, y_prob):
-    """Custom multiclass report which consist of:
-    - classification report (Sklearn)
-    - confusion matrix
-    - precision recall curve
-    - ROC curve
-    - OvR roc_auc scores and plots
-    - OvO roc_auc scores and plots
-    Args:
-        y_test (ArrayLike): actual values
-        y_pred (ArrayLike): predicted values
-        y_prob (ArrayLike): class probabilities for each sample
-    """
+def plot_precision_recall_curve(
+    y_true: np.ndarray, y_proba: np.ndarray, classes: np.ndarray
+) -> float:
+    """Plot the precision-recall curve for each class and return average AP over all classes."""
+    avg_precisions = []
+
+    for i, class_ in enumerate(classes):
+        precision, recall, _ = precision_recall_curve(y_true[:, i], y_proba[:, i])
+        avg_precision = average_precision_score(y_true[:, i], y_proba[:, i])
+        avg_precisions.append(avg_precision)
+
+        plt.plot(
+            recall, precision, lw=2, label=f"class {class_} AP={avg_precision:.2f}"
+        )
+
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.legend(loc="best")
+    plt.title("Precision vs. Recall curve")
+    plt.show()
+
+    mean_avg_precision = np.mean(avg_precisions)
+    print(f"Average AP over all classes: {mean_avg_precision:.4f}")
+
+    return mean_avg_precision
+
+
+def plot_roc_curve(
+    y_true: np.ndarray, y_proba: np.ndarray, classes: np.ndarray
+) -> None:
+    """Plot the ROC curve for each class."""
+    for i, class_ in enumerate(classes):
+        fpr, tpr, _ = roc_curve(y_true[:, i], y_proba[:, i])
+
+        plt.plot(fpr, tpr, lw=2, label=f"class {class_}")
+
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.legend(loc="best")
+    plt.title("ROC Curve")
+    plt.show()
+
+
+def plot_prob_distribution(
+    y_test: np.ndarray, y_proba: np.ndarray, classes: np.ndarray, type_: str = "ovr"
+) -> Tuple[float, dict]:
+    """Plot probability distributions and return AUC scores."""
+    roc_auc = {}
+    total_auc = 0
+    plt.figure(figsize=(20, 7))
+
+    if type_ == "ovr":
+        bins = np.linspace(0, 1, 31)
+        for i, class_ in enumerate(classes):
+            df_aux = pd.DataFrame(
+                {
+                    "class": [1 if y == class_ else 0 for y in y_test],
+                    "prob": y_proba[:, i],
+                }
+            )
+            plt.subplot(1, len(classes), i + 1)
+            sns.histplot(data=df_aux, x="prob", hue="class", bins=bins)
+            plt.title(class_)
+            roc_auc[class_] = roc_auc_score(df_aux["class"], df_aux["prob"])
+    elif type_ == "ovo":
+        bins = np.linspace(0, 1, 21)
+        combinations = [
+            (i, j) for i in range(len(classes)) for j in range(i + 1, len(classes))
+        ]
+
+        for index, (i, j) in enumerate(combinations):
+            df_aux = pd.DataFrame()
+            df_aux["class"] = y_test
+            df_aux["prob"] = y_proba[:, i]
+
+            # Filter the dataframe to only contain instances of the two classes being considered
+            df_aux = df_aux[
+                (df_aux["class"] == classes[i]) | (df_aux["class"] == classes[j])
+            ]
+
+            # Convert the target to binary: 1 for the current class (classes[i]) and 0 for the other class (classes[j])
+            df_aux["class"] = [1 if y == classes[i] else 0 for y in df_aux["class"]]
+
+            # Check if there are more than 1 unique class after binarization
+            if len(df_aux["class"].unique()) <= 1:
+                continue
+            plt.subplot(2, len(combinations) // 2, index + 1)
+            sns.histplot(data=df_aux, x="prob", hue="class", bins=bins, legend=False)
+            plt.title(f"{classes[i]} vs {classes[j]}")
+            roc_auc[f"{classes[i]} vs {classes[j]}"] = roc_auc_score(
+                df_aux["class"], df_aux["prob"]
+            )
+
+    for key, value in roc_auc.items():
+        print(f"{key} ROC AUC {type_.upper()}: {value:.4f}")
+        total_auc += value
+
+    avg_auc = total_auc / len(roc_auc)
+    print(f"Average ROC AUC {type_.upper()}: {avg_auc:.4f}")
+
+    plt.tight_layout()
+    plt.show()
+
+    return avg_auc, roc_auc
+
+
+def custom_multiclass_report(
+    y_test: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray
+) -> None:
+    """Display various multiclass classification metrics and plots."""
+    classes = np.unique(y_test)
+    y_test_bin = label_binarize(y_test, classes=classes)
 
     print(classification_report(y_test, y_pred))
 
-    # -----------------------------------------------------
-    # Plot confusion matrix
-    plt.figure(figsize=(10, 5))
+    # Compute confusion matrix
     cm = confusion_matrix(y_test, y_pred)
-    sns.heatmap(
-        cm,
+
+    # Normalize the confusion matrix by row (i.e., by the number of samples in each class)
+    cm_norm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis] * 100
+
+    plt.figure(figsize=(10, 5))
+    ax = sns.heatmap(
+        cm_norm,
         annot=True,
-        xticklabels=list(np.unique(y_test)),
-        yticklabels=list(np.unique(y_test)),
+        xticklabels=classes,
+        yticklabels=classes,
         cbar=False,
-        fmt="d",
+        fmt=".2f",
         linewidths=1,
         cmap="Blues",
+        annot_kws={"size": 12, "weight": "bold"},
     )
-    plt.title("Confusion Matrix")
-    plt.xlabel("Predicted class")
-    plt.ylabel("Actual class")
+
+    # Adjusting color of annotations based on background
+    for t in ax.texts:
+        t.set_text(t.get_text() + " %")
+        if float(t.get_text().strip(" %")) > 30:
+            t.set_color("white")
+        else:
+            t.set_color("black")
+
+    plt.title("Normalized Confusion Matrix", size=15)
+    plt.xlabel("Predicted class", size=13)
+    plt.ylabel("Actual class", size=13)
     plt.show()
-    # -----------------------------------------------------
 
-    # precision recall curve
-    precision = dict()
-    recall = dict()
-    classes = np.unique(y_test)
-    for i in range(len(set(y_test))):
-        precision[i], recall[i], _ = precision_recall_curve(
-            label_binarize(y_test, classes=classes)[:, i], y_prob[:, i]
-        )
-        ap = average_precision_score(
-            label_binarize(y_test, classes=classes)[:, i], y_prob[:, i]
-        )
-        plt.plot(
-            recall[i],
-            precision[i],
-            lw=2,
-            label="class {}".format(i) + " AP = {}".format(round(ap, 2)),
-        )
+    plot_precision_recall_curve(y_test_bin, y_proba, classes)
+    plot_roc_curve(y_test_bin, y_proba, classes)
 
-    plt.xlabel("recall")
-    plt.ylabel("precision")
-    plt.legend(loc="best")
-    plt.title("precision vs. recall curve")
-    plt.show()
-    # -----------------------------------------------------
-
-    # roc curve
-    fpr = dict()
-    tpr = dict()
-    for i in range(len(set(y_test))):
-        fpr[i], tpr[i], _ = roc_curve(
-            label_binarize(y_test, classes=classes)[:, i], y_prob[:, i]
-        )
-        plt.plot(fpr[i], tpr[i], lw=2, label="class {}".format(i))
-
-    plt.xlabel("false positive rate")
-    plt.ylabel("true positive rate")
-    plt.legend(loc="best")
-    plt.title("ROC curve")
-    plt.show()
-    # -----------------------------------------------------
-
-    # Plots the Probability Distributions and the ROC Curves One vs Rest
-    plt.figure(figsize=(20, 4))
-    bins = [i / 30 for i in range(30)] + [1]
-    roc_auc_ovr = {}
-
-    for i in range(len(classes)):
-        # Gets the class
-        c = classes[i]
-
-        # Prepares an auxiliar dataframe to help with the plots
-        df_aux = pd.DataFrame()
-        df_aux["class"] = [1 if y == c else 0 for y in y_test]
-        df_aux["prob"] = y_prob[:, i]
-        df_aux = df_aux.reset_index(drop=True)
-
-        # Plots the probability distribution for the class and the rest
-        ax = plt.subplot(1, len(classes), i + 1)
-        sns.histplot(x="prob", data=df_aux, hue="class", color="b", ax=ax, bins=bins)
-        ax.set_title(c)
-        ax.legend([f"Class: {c}", "Rest"])
-        ax.set_xlabel(f"P(x = {c})")
-        # Calculates the ROC AUC OvR
-        roc_auc_ovr[c] = roc_auc_score(df_aux["class"], df_aux["prob"])
-
-    # Displays the ROC AUC for each class
-    avg_roc_auc = 0
-    i = 0
-    for k in roc_auc_ovr:
-        avg_roc_auc += roc_auc_ovr[k]
-        i += 1
-        print(f"{k} ROC AUC OvR: {roc_auc_ovr[k]:.4f}")
-    print(f"average ROC AUC OvR: {avg_roc_auc/i:.4f}")
-
-    plt.tight_layout()
-    plt.show()
-    # -----------------------------------------------------
-
-    # Plots the Probability Distributions and the ROC Curves One vs ONe
-    plt.figure(figsize=(20, 7))
-    bins = [i / 20 for i in range(20)] + [1]
-    roc_auc_ovo = {}
-    classes_combinations = []
-    class_list = list(classes)
-    for i in range(len(class_list)):
-        for j in range(i + 1, len(class_list)):
-            classes_combinations.append([class_list[i], class_list[j]])
-            classes_combinations.append([class_list[j], class_list[i]])
-
-    for i in range(len(classes_combinations)):
-        # Gets the class
-        comb = classes_combinations[i]
-        c1 = comb[0]
-        c2 = comb[1]
-        c1_index = class_list.index(c1)
-        title = str(c1) + " vs " + str(c2)
-
-        # Prepares an auxiliar dataframe to help with the plots
-        df_aux = pd.DataFrame()
-        df_aux["class"] = y_test
-        df_aux["prob"] = y_prob[:, c1_index]
-
-        # Slices only the subset with both classes
-        df_aux = df_aux[(df_aux["class"] == c1) | (df_aux["class"] == c2)]
-        df_aux["class"] = [1 if y == c1 else 0 for y in df_aux["class"]]
-        df_aux = df_aux.reset_index(drop=True)
-
-        # Plots the probability distribution for the class and the rest
-        ax = plt.subplot(2, 6, i + 1)
-        sns.histplot(x="prob", data=df_aux, hue="class", color="b", ax=ax, bins=bins)
-        ax.set_title(title)
-        ax.legend([f"Class: {c1}", f"Class: {c2}"])
-        ax.set_xlabel(f"P(x = {c1})")
-        # Calculates the ROC AUC OvO
-        roc_auc_ovo[title] = roc_auc_score(df_aux["class"], df_aux["prob"])
-
-    avg_roc_auc = 0
-    i = 0
-    for k in roc_auc_ovo:
-        avg_roc_auc += roc_auc_ovo[k]
-        i += 1
-        print(f"{k} ROC AUC OvO: {roc_auc_ovo[k]:.4f}")
-    print(f"average ROC AUC OvO: {avg_roc_auc/i:.4f}")
-
-    plt.tight_layout()
-    plt.show()
-    # -----------------------------------------------------
+    plot_prob_distribution(y_test, y_proba, classes, "ovr")
+    plot_prob_distribution(y_test, y_proba, classes, "ovo")
 
 
-class CroplandDataModule_LSTM(pl.LightningDataModule):
+class ConvLSTMCell(nn.Module):
     """
-    This module defines a LightningDataModule class for loading and preparing data for a Cropland classification model using LSTM architecture.
+    A ConvLSTM cell which uses convolutional gates for input transformations, suitable for
+    sequences of image-like data with spatial correlations.
 
     Args:
-    X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
-    y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
-    batch_size (int): The batch size to be used for training and evaluation. Default is 128.
-    """
-
-    def __init__(self, X: dict, y: dict, batch_size: int = 128):
-        super().__init__()
-        self.batch_size = batch_size
-        self.X_train, self.X_val, self.X_test = (
-            torch.FloatTensor(X["Train"]),
-            torch.FloatTensor(X["Val"]),
-            torch.FloatTensor(X["Test"]),
-        )
-        self.y_train, self.y_val, self.y_test = (
-            torch.LongTensor(y["Train"]),
-            torch.LongTensor(y["Val"]),
-            torch.LongTensor(y["Test"]),
-        )
-
-        self.dl_dict = {"batch_size": self.batch_size}
-
-    def setup(self, stage=None):
-        if stage == "fit" or stage is None:
-            self.dataset_train = TensorDataset(self.X_train, self.y_train)
-            self.dataset_val = TensorDataset(self.X_val, self.y_val)
-
-        if stage == "test" or stage is None:
-            self.dataset_test = TensorDataset(self.X_test, self.y_test)
-
-    def train_dataloader(self):
-        return DataLoader(self.dataset_train, shuffle=True, **self.dl_dict)
-
-    def val_dataloader(self):
-        return DataLoader(self.dataset_val, **self.dl_dict)
-
-    def test_dataloader(self):
-        return DataLoader(self.dataset_test, **self.dl_dict)
-
-
-class Crop_Transformer(nn.Module):
-    """
-    A PyTorch module implementing a Crop Transformer classifier.
-
-    The Crop_Transformer module takes as input a sequence of feature vectors and applies a Transformer encoder (https://pytorch.org/docs/stable/generated/torch.nn.TransformerEncoderLayer.html)
-    followed by two linear layers with ReLU activation to predict the output.
-
-    Args:
-    input_size (int): The number of expected features in the input (default: 52).
-    hidden_size (int): The number of features in the hidden state (default: 104).
-    num_layers (int): Number of recurrent layers (default: 4).
-    output_size (int): The number of output logits (default: 4).
-
-    Inputs:
-    X (torch.Tensor): A tensor of shape (batch_size, sequence_length, input_size) containing the input sequence.
-
-    Outputs:
-    out (torch.Tensor): A tensor of shape (batch_size, output_size) containing the output logits.
-
+    - input_dim (int): Number of channels of input tensor.
+    - hidden_dim (int): Number of channels of hidden state.
+    - kernel_size (int or tuple): Size of the convolutional kernel.
+    - bias (bool): Whether to add the bias.
     """
 
     def __init__(
         self,
-        d_model=52,
-        nhead=13,
-        dim_feedforward=108,
-        dropout=0.1,
-        activation="relu",
-        output_size=4,
+        input_dim: int,
+        hidden_dim: int,
+        kernel_size: Union[int, Tuple[int, int]],
+        bias: bool = True,
     ) -> None:
-        super(Crop_Transformer, self).__init__()
-        self.transformer_enc = nn.TransformerEncoderLayer(
+        super(ConvLSTMCell, self).__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+
+        # Ensure kernel_size is a tuple
+        self.kernel_size = (
+            (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        )
+
+        self.padding = self.kernel_size[0] // 2
+        self.bias = bias
+
+        self.conv = nn.Conv1d(
+            in_channels=self.input_dim + self.hidden_dim,
+            out_channels=4 * self.hidden_dim,
+            kernel_size=self.kernel_size,
+            padding=self.padding,
+            bias=self.bias,
+        )
+
+    def forward(
+        self, input: torch.Tensor, cur_state: Tuple[torch.Tensor, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the ConvLSTM cell.
+
+        Args:
+        - input (torch.Tensor): The input tensor for the current timestep.
+        - cur_state (Tuple[torch.Tensor, torch.Tensor]): Tuple containing the current hidden state
+          and cell state.
+
+        Returns:
+        - Tuple[torch.Tensor, torch.Tensor]: The next hidden and cell states.
+        """
+        h_cur, c_cur = cur_state
+        combined = torch.cat([input, h_cur], dim=1)  # concatenate along channel axis
+
+        # Apply convolution
+        combined_conv = self.conv(combined)
+
+        # Split the convolutional output into four parts for gates
+        cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=1)
+
+        # Calculate gate values
+        i = torch.sigmoid(cc_i)
+        f = torch.sigmoid(cc_f)
+        o = torch.sigmoid(cc_o)
+        g = torch.tanh(cc_g)
+
+        # Compute next cell and hidden states
+        c_next = f * c_cur + i * g
+        h_next = o * torch.tanh(c_next)
+
+        return h_next, c_next
+
+    def init_hidden(
+        self, batch_size: int, length: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Initialize the hidden and cell states to zeros.
+
+        Args:
+        - batch_size (int): The batch size.
+        - length (int): The sequence length.
+
+        Returns:
+        - Tuple[torch.Tensor, torch.Tensor]: Initialized hidden and cell states.
+        """
+        device = self.conv.weight.device
+        return (
+            torch.zeros(batch_size, self.hidden_dim, length, device=device),
+            torch.zeros(batch_size, self.hidden_dim, length, device=device),
+        )
+
+
+class CropConvLSTM(nn.Module):
+
+    """
+    A PyTorch module implementing a Crop Conv LSTM network.
+
+    Attributes:
+    -----------
+    input_dim : int
+        Number of channels in the input.
+    hidden_dim : Union[int, List[int]]
+        Number of hidden channels.
+    kernel_size : Union[Tuple[int], List[Tuple[int]]]
+        Size of the convolutional kernel.
+    n_layers : int
+        Number of LSTM layers.
+    n_classes : int
+        Number of output classes.
+    input_len_monthly : int
+        Length of the monthly input sequence.
+    seq_len : int
+        Sequence length.
+    bias : bool
+        If True, adds a bias term; Otherwise no bias term.
+    return_all_layers : bool
+        If True, returns all LSTM layers; Otherwise only the last layer.
+    cell_list : nn.ModuleList
+        List containing ConvLSTMCell modules.
+    flatten : nn.Flatten
+        Flatten layer.
+    net : nn.Sequential
+        Sequential network for processing LSTM outputs.
+
+    Input:
+    --------
+        A tensor of size B, T, C
+    Output:
+    --------
+        A tuple of two lists of length n_layers (or length 1 if return_all_layers is False).
+            0 - layer_output_list is the list of lists of length T of each output
+            1 - last_state_list is the list of last states
+                    each element of the list is a tuple (h, c) for hidden state and memory
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 1,
+        hidden_dim: Union[int, List[int]] = 16,
+        kernel_size: Union[Tuple[int], List[Tuple[int]]] = (3,),
+        n_layers: int = 1,
+        n_classes: int = 4,
+        input_len_monthly: int = 52,
+        seq_len: int = 12,
+        bias: bool = False,
+        return_all_layers: bool = False,
+    ) -> None:
+        """
+        Initializes the CropConvLSTM module.
+        """
+        super(CropConvLSTM, self).__init__()
+        self._validate_kernel_size(kernel_size)
+
+        kernel_size = self._extend_for_multilayer(kernel_size, n_layers)
+        hidden_dim = self._extend_for_multilayer(hidden_dim, n_layers)
+        assert (
+            len(kernel_size) == len(hidden_dim) == n_layers
+        ), "Inconsistent list length."
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.kernel_size = kernel_size
+        self.n_layers = n_layers
+        self.bias = bias
+        self.return_all_layers = return_all_layers
+        self.n_classes = n_classes
+        self.input_len_monthly = input_len_monthly
+        self.seq_len = seq_len
+
+        self.cell_list = nn.ModuleList(
+            [
+                ConvLSTMCell(
+                    input_dim=self.input_dim if i == 0 else self.hidden_dim[i - 1],
+                    hidden_dim=self.hidden_dim[i],
+                    kernel_size=self.kernel_size[i],
+                    bias=self.bias,
+                )
+                for i in range(self.n_layers)
+            ]
+        )
+
+        self.flatten = nn.Flatten()
+        self.net = nn.Sequential(
+            nn.Linear(
+                self.hidden_dim[0] * self.seq_len * self.input_len_monthly,
+                self.hidden_dim[0] * self.seq_len,
+            ),
+            nn.BatchNorm1d(self.hidden_dim[0] * self.seq_len),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(self.hidden_dim[0] * self.seq_len, self.seq_len),
+            nn.BatchNorm1d(self.seq_len),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(self.seq_len, self.n_classes),
+        )
+
+    def forward(
+        self, input_monthly: torch.Tensor, hidden_state: torch.Tensor = None
+    ) -> torch.Tensor:
+        """
+        Forward pass of the CropConvLSTM module.
+
+        Parameters:
+        -----------
+        input_monthly : torch.Tensor
+            Tensor of shape (batch_size, sequence_length, input_size) containing the monthly input sequence.
+        hidden_state : torch.Tensor, optional
+            Initial hidden state for the LSTM cells.
+
+        Returns:
+        --------
+        torch.Tensor
+            Model's output tensor.
+        """
+        input_monthly = input_monthly[:, None, :, :]
+        b = input_monthly.size()[0]
+
+        # Implement stateful ConvLSTM
+        if hidden_state is not None:
+            raise NotImplementedError()
+        else:
+            hidden_state = self._init_hidden(
+                batch_size=b, length=self.input_len_monthly
+            )
+
+        layer_output_list, last_state_list, cur_layer_input = [], [], input_monthly
+
+        for layer_idx in range(self.n_layers):
+            h, c = hidden_state[layer_idx]
+            output_inner = []
+            for t in range(self.seq_len):
+                h, c = self.cell_list[layer_idx](
+                    input=cur_layer_input[:, :, t, :], cur_state=[h, c]
+                )
+                output_inner.append(h)
+
+            layer_output = torch.stack(output_inner, dim=1)
+            cur_layer_input = layer_output
+
+            layer_output_list.append(layer_output)
+            last_state_list.append([h, c])
+
+        if not self.return_all_layers:
+            layer_output_list = layer_output_list[-1:]
+            last_state_list = last_state_list[-1:]
+
+        output_monthly = self.flatten(layer_output_list[0])
+        output = self.net(output_monthly)
+
+        return output
+
+    def _init_hidden(
+        self, batch_size: int, length: int
+    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        return [cell.init_hidden(batch_size, length) for cell in self.cell_list]
+
+    @staticmethod
+    def _validate_kernel_size(kernel_size: Union[Tuple[int], List[Tuple[int]]]) -> None:
+        if not (
+            isinstance(kernel_size, tuple)
+            or all(isinstance(elem, tuple) for elem in kernel_size)
+        ):
+            raise ValueError("`kernel_size` must be tuple or list of tuples")
+
+    @staticmethod
+    def _extend_for_multilayer(
+        param: Union[int, List[int]], n_layers: int
+    ) -> List[int]:
+        return [param] * n_layers if not isinstance(param, list) else param
+
+
+class CropTransformer(nn.Module):
+    """
+    Crop Transformer classifier.
+
+    This module applies the Transformer encoder on input sequences and then
+    uses a feed-forward neural network for classification.
+
+    Args:
+        d_model (int): Number of expected features in the input. Default: 52.
+        nhead (int): Number of heads in the multi-head attention mechanism. Default: 4.
+        dim_feedforward (int): Dimension of the feedforward network. Default: 256.
+        hidden_size (int): Number of features in the hidden state. Default: 128.
+        num_layers (int): Number of Transformer encoder layers. Default: 2.
+        dropout (float): Dropout rate. Default: 0.2.
+        activation (str): Activation function for feed-forward networks ("relu" or "gelu"). Default: "relu".
+        output_size (int): Number of output logits. Default: 4.
+
+    Inputs:
+        X (torch.Tensor): Tensor of shape (batch_size, sequence_length, d_model)
+                          representing the input sequence.
+
+    Outputs:
+        out (torch.Tensor): Tensor of shape (batch_size, output_size)
+                            representing the output logits.
+    """
+
+    def __init__(
+        self,
+        d_model: int = 52,
+        nhead: int = 4,
+        dim_feedforward: int = 256,
+        hidden_size: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+        activation: str = "relu",
+        output_size: int = 4,
+    ) -> None:
+        super(CropTransformer, self).__init__()
+
+        # Define the Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation=activation,
-            batch_first=True,
         )
-        self.linearLayer1 = nn.Linear(d_model, d_model)
-        self.linearLayer2 = nn.Linear(12 * d_model, output_size)
-        self.act = nn.ReLU()
-        self.flatten = nn.Flatten()
+        self.transformer_enc = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers
+        )
+
+        # Define the classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LayerNorm(hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, output_size),
+        )
 
     def forward(self, X):
-        out = self.act(self.transformer_enc(X) + X)
-        out = self.act(self.linearLayer1(out) + out)
-        out = self.flatten(out)
-        out = self.linearLayer2(out)
-        return out
+        """Forward pass for Crop Transformer."""
+        # Apply Transformer encoder
+        encoded = self.transformer_enc(X)
+
+        # Use encoding of the last time step for classification
+        output = encoded[:, -1, :]
+        output = self.classifier(output)
+        return output
 
 
-class Crop_LSTM(nn.Module):
+class CropLSTM(nn.Module):
     """
-    A PyTorch module implementing a Crop LSTM network.
+    Crop LSTM network.
 
-    The Crop_LSTM module takes as input a sequence of feature vectors and applies a multi-layer LSTM network
-    followed by two linear layers with ReLU activation to predict the output.
+    This module applies a multi-layer LSTM on input sequences and then
+    uses a feed-forward neural network for classification.
 
     Args:
-    input_size (int): The number of expected features in the input (default: 52).
-    hidden_size (int): The number of features in the hidden state (default: 104).
-    num_layers (int): Number of recurrent layers (default: 4).
-    output_size (int): The number of output logits (default: 4).
+        input_size (int): Number of expected features in the input. Default: 52.
+        hidden_size (int): Number of features in the hidden state. Default: 104.
+        num_layers (int): Number of recurrent LSTM layers. Default: 4.
+        output_size (int): Number of output logits. Default: 4.
 
     Inputs:
-    X (torch.Tensor): A tensor of shape (batch_size, sequence_length, input_size) containing the input sequence.
+        X (torch.Tensor): Tensor of shape (batch_size, sequence_length, input_size)
+                          representing the input sequence.
 
     Outputs:
-    out (torch.Tensor): A tensor of shape (batch_size, output_size) containing the output logits.
-
+        out (torch.Tensor): Tensor of shape (batch_size, output_size)
+                            representing the output logits.
     """
 
     def __init__(
         self,
-        input_size=52,
-        hidden_size=104,
-        num_layers=4,
-        output_size=4,
+        input_size: int = 52,
+        hidden_size: int = 104,
+        num_layers: int = 4,
+        output_size: int = 4,
     ) -> None:
-        super(Crop_LSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.linearLayer1 = nn.Linear(hidden_size, hidden_size)
-        self.linearLayer2 = nn.Linear(hidden_size, output_size)
-        self.act = nn.ReLU()
+        super(CropLSTM, self).__init__()
+
+        # Define the LSTM layer
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=False,
+        )
+
+        # LSTM weights initialization
+        self._initialize_lstm_weights()
+
+        # Define the classifier layers
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, output_size),
+        )
 
     def forward(self, X):
+        """Forward pass for Crop LSTM."""
+        # Apply LSTM
         out, _ = self.lstm(X)
+
+        # Use output of the last time step for classification
         out = out[:, -1, :]
-        out = self.act(self.linearLayer1(out))
-        out = self.linearLayer2(out)
+        out = self.classifier(out)
         return out
 
+    def _initialize_lstm_weights(self):
+        """Initialize LSTM weights."""
+        for name, param in self.lstm.named_parameters():
+            if "weight_ih" in name:
+                torch.nn.init.xavier_uniform_(param.data)
+            elif "weight_hh" in name:
+                torch.nn.init.orthogonal_(param.data)
+            elif "bias" in name:
+                param.data.fill_(0)
 
-class CroplandDataModule_MLP(pl.LightningDataModule):
+
+class CroplandDataModule(pl.LightningDataModule):
     """
-    This module defines a LightningDataModule class for loading and preparing data for a Cropland classification model using MLP architecture.
+    LightningDataModule for loading and preparing data for a Cropland classification models.
 
     Args:
-    X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
-    y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
-    batch_size (int): The batch size to be used for training and evaluation. Default is 128.
+        X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
+        y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
+        batch_size (int): The batch size to be used for training and evaluation. Default is 128.
     """
 
-    def __init__(self, X: dict, y: dict, batch_size: int = 128):
+    def __init__(self, X: dict, y: dict, batch_size: int = 128) -> None:
         super().__init__()
         self.batch_size = batch_size
-        self.X_train, self.X_val, self.X_test = (
-            torch.FloatTensor(X["Train"]),
-            torch.FloatTensor(X["Val"]),
-            torch.FloatTensor(X["Test"]),
-        )
-        self.y_train, self.y_val, self.y_test = (
-            torch.LongTensor(y["Train"]),
-            torch.LongTensor(y["Val"]),
-            torch.LongTensor(y["Test"]),
-        )
+
+        # Convert input data to tensors
+        self.X_train = torch.FloatTensor(X["Train"])
+        self.X_val = torch.FloatTensor(X["Val"])
+        self.X_test = torch.FloatTensor(X["Test"])
+
+        # Convert target labels to tensors
+        self.y_train = torch.LongTensor(y["Train"])
+        self.y_val = torch.LongTensor(y["Val"])
+        self.y_test = torch.LongTensor(y["Test"])
 
         self.dl_dict = {"batch_size": self.batch_size}
 
-    def prepare_data(self):
-        # Calculate class weights for imbalanced dataset
+    def prepare_data(self) -> None:
+        """
+        Calculate class weights for imbalanced dataset and initialize sampler.
+        """
         _, counts = torch.unique(self.y_train.argmax(dim=1), return_counts=True)
         class_weights = 1.0 / torch.sqrt(counts.float())
         loss_weights = class_weights / class_weights.sum()
         ds = self.y_train.argmax(dim=1)
         weights = [loss_weights[i] for i in ds]
-        self.sampler = torch.utils.data.sampler.WeightedRandomSampler(
+        self.sampler = WeightedRandomSampler(
             weights, num_samples=len(weights), replacement=True
         )
 
-    def setup(self, stage=None):
+    def setup(self, stage: str = None) -> None:
+        """
+        Initialize datasets for train, validation, and test phases.
+        """
         if stage == "fit" or stage is None:
             self.dataset_train = TensorDataset(self.X_train, self.y_train)
             self.dataset_val = TensorDataset(self.X_val, self.y_val)
@@ -590,21 +853,29 @@ class CroplandDataModule_MLP(pl.LightningDataModule):
         if stage == "test" or stage is None:
             self.dataset_test = TensorDataset(self.X_test, self.y_test)
 
-    def train_dataloader(self):
-        return DataLoader(
-            self.dataset_train,
-            sampler=self.sampler,
-            **self.dl_dict,
-        )
+    def train_dataloader(self) -> DataLoader:
+        """
+        Returns:
+            DataLoader: DataLoader object for training data.
+        """
+        return DataLoader(self.dataset_train, sampler=self.sampler, **self.dl_dict)
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> DataLoader:
+        """
+        Returns:
+            DataLoader: DataLoader object for validation data.
+        """
         return DataLoader(self.dataset_val, **self.dl_dict)
 
-    def test_dataloader(self):
+    def test_dataloader(self) -> DataLoader:
+        """
+        Returns:
+            DataLoader: DataLoader object for testing data.
+        """
         return DataLoader(self.dataset_test, **self.dl_dict)
 
 
-class Crop_MLP(nn.Module):
+class CropMLP(nn.Module):
     """
     A multi-layer perceptron (MLP) used for crop classification.
 
@@ -619,8 +890,8 @@ class Crop_MLP(nn.Module):
         torch.Tensor: A tensor of shape (batch_size, output_size) containing the output logits.
     """
 
-    def __init__(self, input_size=162, output_size=4) -> None:
-        super(Crop_MLP, self).__init__()
+    def __init__(self, input_size: int = 162, output_size: int = 4) -> None:
+        super(CropMLP, self).__init__()
 
         self.net = nn.Sequential(
             nn.Linear(input_size, 16 * input_size),
@@ -647,12 +918,11 @@ class Crop_MLP(nn.Module):
             nn.Linear(input_size // 8, output_size),
         )
 
-    def forward(self, X) -> torch.Tensor:
-        output = self.net(X)
-        return output
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        return self.net(X)
 
 
-class Crop_PL(pl.LightningModule):
+class CropPL(pl.LightningModule):
     """
     PyTorch Lightning module for training a crop classification neural network.
 
@@ -670,12 +940,12 @@ class Crop_PL(pl.LightningModule):
     def __init__(
         self,
         net: torch.nn.Module,
-        num_classes=4,
+        num_classes: int = 4,
     ):
         super().__init__()
         self.save_hyperparameters(logger=False, ignore=["net"])
         self.net = net
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=1)
         self.criterion = nn.CrossEntropyLoss()
 
         self.train_loss = torchmetrics.MeanMetric()
@@ -683,165 +953,100 @@ class Crop_PL(pl.LightningModule):
         self.test_loss = torchmetrics.MeanMetric()
         self.val_F1Score_best = torchmetrics.MaxMetric()
 
+        metric_args = {
+            "task": "multiclass",
+            "num_classes": num_classes,
+            "average": "macro",
+        }
+
         self.train_accuracy = torchmetrics.Accuracy(
-            task="multiclass", num_classes=num_classes, top_k=1
+            task="multiclass", num_classes=num_classes
         )
         self.val_accuracy = torchmetrics.Accuracy(
-            task="multiclass", num_classes=num_classes, top_k=1
+            task="multiclass", num_classes=num_classes
         )
         self.test_accuracy = torchmetrics.Accuracy(
-            task="multiclass", num_classes=num_classes, top_k=1
+            task="multiclass", num_classes=num_classes
         )
 
-        self.train_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.val_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.test_avg_precision = torchmetrics.AveragePrecision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+        self.train_precision = torchmetrics.Precision(**metric_args)
+        self.val_precision = torchmetrics.Precision(**metric_args)
+        self.test_precision = torchmetrics.Precision(**metric_args)
 
-        self.train_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.val_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.test_precision = torchmetrics.Precision(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+        self.train_recall = torchmetrics.Recall(**metric_args)
+        self.val_recall = torchmetrics.Recall(**metric_args)
+        self.test_recall = torchmetrics.Recall(**metric_args)
 
-        self.train_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.val_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.test_recall = torchmetrics.Recall(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+        self.train_F1Score = torchmetrics.F1Score(**metric_args)
+        self.val_F1Score = torchmetrics.F1Score(**metric_args)
+        self.test_F1Score = torchmetrics.F1Score(**metric_args)
 
-        self.train_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.val_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
-        self.test_F1Score = torchmetrics.F1Score(
-            task="multiclass", num_classes=num_classes, top_k=1, average="macro"
-        )
+        self.train_avg_precision = torchmetrics.AveragePrecision(**metric_args)
+        self.val_avg_precision = torchmetrics.AveragePrecision(**metric_args)
+        self.test_avg_precision = torchmetrics.AveragePrecision(**metric_args)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-    def loss(self, y_hat, y):
+    def _compute_loss(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return self.criterion(y_hat, y)
 
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams)
         self.val_F1Score_best.reset()
 
-    def model_step(self, batch):
-        objs, target = batch
-        predictions = self(objs)
-        loss = self.loss(predictions, target.float())
-        return loss, self.softmax(predictions), torch.argmax(target, dim=1)
+    def _model_step(self, batch: tuple) -> tuple:
+        x, y = batch
+        y_hat = self(x)
+        loss = self._compute_loss(y_hat, y.float())
+        return loss, self.softmax(y_hat), torch.argmax(y, dim=1)
 
-    def training_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
+    def _log_metrics(
+        self, phase: str, loss: torch.Tensor, y_hat: torch.Tensor, y: torch.Tensor
+    ) -> None:
+        getattr(self, f"{phase}_loss")(loss)
+        getattr(self, f"{phase}_accuracy")(y_hat, y)
+        getattr(self, f"{phase}_precision")(y_hat, y)
+        getattr(self, f"{phase}_recall")(y_hat, y)
+        getattr(self, f"{phase}_F1Score")(y_hat, y)
+        getattr(self, f"{phase}_avg_precision")(y_hat, y)
 
-        self.train_loss(loss)
-        self.train_accuracy(predictions, target)
-        self.train_recall(predictions, target)
-        self.train_precision(predictions, target)
-        self.train_F1Score(predictions, target)
-        self.train_avg_precision(predictions, target)
+        self.log(f"{phase}/loss", getattr(self, f"{phase}_loss"))
+        self.log(f"{phase}/accuracy", getattr(self, f"{phase}_accuracy"))
+        self.log(f"{phase}/precision", getattr(self, f"{phase}_precision"))
+        self.log(f"{phase}/recall", getattr(self, f"{phase}_recall"))
+        self.log(f"{phase}/F1Score", getattr(self, f"{phase}_F1Score"))
+        self.log(f"{phase}/AP", getattr(self, f"{phase}_avg_precision"))
 
-        self.log(
-            "train/loss",
-            self.train_loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log("train/accuracy", self.train_accuracy, on_step=False, on_epoch=True)
-        self.log("train/recall", self.train_recall, on_step=False, on_epoch=True)
-        self.log("train/precision", self.train_precision, on_step=False, on_epoch=True)
-        self.log(
-            "train/F1Score",
-            self.train_F1Score,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log("train/AP", self.train_avg_precision, on_step=False, on_epoch=True)
+    def training_step(self, batch: tuple, batch_idx: int) -> dict:
+        loss, y_hat, y = self._model_step(batch)
+        self._log_metrics("train", loss, y_hat, y)
+        return {"loss": loss}
 
-        return {"loss": loss, "preds": predictions, "target": target}
-
-    def validation_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
-
-        self.val_loss(loss)
-        self.val_accuracy(predictions, target)
-        self.val_recall(predictions, target)
-        self.val_precision(predictions, target)
-        self.val_F1Score(predictions, target)
-        self.val_avg_precision(predictions, target)
-
-        self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/accuracy", self.val_accuracy, on_step=False, on_epoch=True)
-        self.log("val/recall", self.val_recall, on_step=False, on_epoch=True)
-        self.log("val/precision", self.val_precision, on_step=False, on_epoch=True)
-        self.log(
-            "val/F1Score", self.val_F1Score, on_step=False, on_epoch=True, prog_bar=True
-        )
-        self.log("val/AP", self.val_avg_precision, on_step=False, on_epoch=True)
-
-        return {"loss": loss, "preds": predictions, "target": target}
+    def validation_step(self, batch: tuple, batch_idx: int) -> dict:
+        loss, y_hat, y = self._model_step(batch)
+        self._log_metrics("val", loss, y_hat, y)
+        return {"val_loss": loss}
 
     def validation_epoch_end(self, outputs):
         F1Score = self.val_F1Score.compute()
         self.val_F1Score_best(F1Score)
-        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=False)
+        self.log("val/F1Score_best", self.val_F1Score_best.compute(), prog_bar=True)
 
-    def test_step(self, batch, batch_idx):
-        loss, predictions, target = self.model_step(batch)
+    def test_step(self, batch: tuple, batch_idx: int) -> dict:
+        loss, y_hat, y = self._model_step(batch)
+        self._log_metrics("test", loss, y_hat, y)
+        return {"test_loss": loss}
 
-        self.test_loss(loss)
-        self.test_accuracy(predictions, target)
-        self.test_recall(predictions, target)
-        self.test_precision(predictions, target)
-        self.test_F1Score(predictions, target)
-        self.test_avg_precision(predictions, target)
-
-        self.log("test/loss", self.test_loss, prog_bar=True)
-        self.log("test/accuracy", self.test_accuracy, on_step=False, on_epoch=True)
-        self.log("test/recall", self.test_recall, on_step=False, on_epoch=True)
-        self.log("test/precision", self.test_precision, on_step=False, on_epoch=True)
-        self.log(
-            "test/F1Score",
-            self.test_F1Score,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
-        self.log("test/AP", self.test_avg_precision, on_step=False, on_epoch=True)
-
-        return {"loss": loss, "preds": predictions, "target": target}
-
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> dict[str, Any] | dict[str, torch.optim.Adam]:
         optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3, weight_decay=3e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
         if scheduler is not None:
             scheduler = scheduler(
                 optimizer=optimizer,
-                patience=10,
+                patience=25,
                 mode="min",
-                factor=0.5,
+                factor=0.1,
                 verbose=True,
                 min_lr=1e-8,
                 threshold=5e-4,
