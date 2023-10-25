@@ -698,17 +698,17 @@ class CropTransformer(nn.Module):
         super(CropTransformer, self).__init__()
 
         # Define the Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            activation=activation,
-        )
         self.transformer_enc = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_layers
+            nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation=activation,
+                batch_first=True,
+            ),
+            num_layers=num_layers,
         )
-
         # Define the classifier
         self.classifier = nn.Sequential(
             nn.Linear(d_model, hidden_size),
@@ -771,25 +771,20 @@ class CropLSTM(nn.Module):
             batch_first=True,
             bidirectional=False,
         )
-
+        
         # LSTM weights initialization
         self._initialize_lstm_weights()
 
         # Define the classifier layers
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, output_size),
-        )
+        self.linearLayer1 = nn.Linear(hidden_size, hidden_size)
+        self.linearLayer2 = nn.Linear(hidden_size, output_size)
+        self.act = nn.ReLU()
 
     def forward(self, X):
-        """Forward pass for Crop LSTM."""
-        # Apply LSTM
         out, _ = self.lstm(X)
-
-        # Use output of the last time step for classification
         out = out[:, -1, :]
-        out = self.classifier(out)
+        out = self.act(self.linearLayer1(out))
+        out = self.linearLayer2(out)
         return out
 
     def _initialize_lstm_weights(self):
