@@ -9,9 +9,9 @@ from torch import nn
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
-from src.model_utils import (
-    CroplandDatasetPredict,
-)
+# from src.model_utils import (
+#     CroplandDatasetTest,
+# )
 from copy import deepcopy
 import src.predict as model_predict
 
@@ -32,17 +32,6 @@ def estimate_metrics(y_probs, y_dict, sklearn_binary_metric):
     return scores
 
 
-# Define your input and target data (assuming they are already loaded)
-# input_data = X["Test"]
-# target_data = y["Test"]
-
-# Define the number of permutations to use
-# num_permutations = 10
-
-
-# Load the feature names from a pickle file
-# with open(os.path.join("..", "..", "data", "npys_data", "keys_lstm.pkl"), "rb") as f:
-#     feature_names = pickle.load(f)
 def estimate_feature_importance_models(
     clf_dict,
     X_dict,
@@ -52,12 +41,12 @@ def estimate_feature_importance_models(
     sklearn_binary_metric,
 ):
     # Initialize an array to store the feature importance scores
-    feature_names = feature_names_dict["mlp"]
+    feature_names = feature_names_dict["mlp"] #keep this key for any case
     # Calculate original score
     y_probs = model_predict.make_predictions(X_dict, clf_dict)
-    y_probs["mean_ensemble_" + "_".join(list(y_probs.keys()))] = sum(
-        list(y_probs.values())
-    ) / len(clf_dict)
+    # y_probs["mean_ensemble_" + "_".join(list(y_probs.keys()))] = sum(
+    #     list(y_probs.values())
+    # ) / len(clf_dict)
     original_score = estimate_metrics(y_probs, y_dict, sklearn_binary_metric)
     # original_precision_score = calculate_precision_score(
     #     model, input_data, target_data, DataSet, sklearn_binary_metric
@@ -65,6 +54,7 @@ def estimate_feature_importance_models(
     feature_importance_scores = {
         model_name: {fn: [] for fn in feature_names} for model_name in y_probs.keys()
     }
+    
     # Loop over each feature dimension
     for feature_dim, feature_name in tqdm(enumerate(feature_names)):
         print(f"Calculating importance for feature {feature_names[feature_dim]}")
@@ -122,44 +112,13 @@ def estimate_feature_importance_models(
                 feature_importance_scores[model_name][feature_name].append(
                     importance_score[model_name]
                 )
+
             del shuffled_input_data
-        # Mean and StD
-    with open(
-        "/app/ArableLandSuitability/results/ensemble/feat_importance.pkl", "wb"
+    # Save
+    for model in y_probs.keys():
+        with open(
+        "/ArableLandSuitability/results/feature_importance/feat_importance_{model}.pkl".format(model), "wb"
     ) as fs:
-        pickle.dump(feature_importance_scores, fs)
+            pickle.dump(feature_importance_scores[model], fs)
 
     return feature_importance_scores
-
-
-def estimate_feature_importance_ensemble(
-    clf_dict,
-    input_data_dict,
-    target_data_dict,
-    feature_names,
-    num_permutations,
-    sklearn_binary_metric=f1_score,
-):
-    results = []
-    # for model in clf_dict.keys():
-    #     if model == "MLP":
-    #         input_data = input_data_dict["mlp"]
-    #         target_data = target_data_dict["mlp"]
-    #     elif (model == "lstm") or (model == "transformer") or (model == "conv_lstm"):
-    #         input_data = input_data_dict["lstm"]
-    #         target_data = target_data_dict["lstm"]
-    #     else:
-    #         input_data = input_data_dict["mlp"]
-    #         target_data = target_data_dict["mlp"]
-
-    #     results.append(
-    #         estimate_feature_importance_model(
-    #             model,
-    #             input_data,
-    #             target_data,
-    #             feature_names,
-    #             num_permutations,
-    #             sklearn_binary_metric,
-    #         )
-    #     )
-    return results

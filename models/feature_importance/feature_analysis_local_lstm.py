@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 sys.path.append(os.path.join("..", ".."))
 
-from src.model_utils import Crop_LSTM, Crop_PL, reshape_data
+from src.model_utils import CropLSTM, CropPL, reshape_data
 
 
 # %%
@@ -61,14 +61,15 @@ years_future = np.arange(2020, 2030)
 
 
 # %%
-path_to_pickled_models = os.path.join("..", "results", "pickle_models")
+path_to_pickled_models = os.path.join("..", "..", "data", "results", "pickle_models")
 
 clf_dict = {
-    "lr": os.path.join(path_to_pickled_models, "Logistic_Regression_crops_final.pkl"),
-    "xgbt": os.path.join(path_to_pickled_models, "XGBoost_crops_final.pkl"),
-    "lgbm": os.path.join(path_to_pickled_models, "LightGBM_crops_final.pkl"),
-    "MLP": os.path.join(path_to_pickled_models, "Crop_MLP.ckpt"),
-    "lstm": os.path.join(path_to_pickled_models, "Crop_LSTM.ckpt"),
+    "lr": os.path.join(path_to_pickled_models, "logreg.pkl"),
+    "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
+    "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.pkl"),
+    "transformer": os.path.join(path_to_pickled_models, "transformer.pkl"),
+    "MLP": os.path.join(path_to_pickled_models, "mlp.pkl"),
+    "lstm": os.path.join(path_to_pickled_models, "lstm.pkl"),
 }
 
 
@@ -89,8 +90,8 @@ poly = geometry.Polygon([i for i in pointList])
 
 # %%
 # Define the parameters of transformation
-width = 9044
-height = 1508
+width = 14695 #9044
+height = 2450 #1508
 
 bbox_size = (height, width)
 bbox = [left, bottom, right, top]
@@ -105,11 +106,11 @@ delta_lat = (top - bottom) / height
 
 # %%
 # defining paths
-path_to_npys_data = os.path.join("..", "data", "npys_data")
+path_to_npys_data = os.path.join("..", "..", "data", "npys_data")
 
 pathFeatures = os.path.join(path_to_npys_data, "2040_2050", "features_ssp245_CNRM.npy")
-pathFeaturesBaseline = os.path.join(path_to_npys_data, "features_initial_data_v1.npy")
-pathResults = os.path.join("..", "results", "2040_2050")
+pathFeaturesBaseline = os.path.join(path_to_npys_data, "features_initial_data.npy")
+pathResults = os.path.join("..", "2040_2050")
 pathMorf = os.path.join(path_to_npys_data, "features_morf_data.npy")
 
 # %%
@@ -118,35 +119,48 @@ X = pd.DataFrame.from_dict(np.load(pathFeatures, allow_pickle=True), orient="col
 X_baseline = pd.DataFrame.from_dict(
     np.load(pathFeaturesBaseline, allow_pickle=True), orient="columns"
 )
-with open(os.path.join(path_to_npys_data, "keys.pkl"), "rb") as fp:
+with open(os.path.join(path_to_npys_data, "X_keys.pkl"), "rb") as fp:
     keys = pickle.load(fp)
 morf = pd.DataFrame.from_dict(np.load(pathMorf, allow_pickle=True), orient="columns")
+morf.drop(columns=['latitude', 'longitude'], inplace=True)
+
 X = pd.concat([X, morf], axis=1)
 X_baseline = pd.concat([X_baseline, morf], axis=1)
 X = X[keys]
 X = X.replace(-np.inf, 0)
+X = X.replace(np.inf, 0)
 X_baseline = X_baseline[keys]
 X_baseline = X_baseline.replace(-np.inf, 0)
+X_baseline = X_baseline.replace(np.inf, 0)
 
 # Scaler used for training
 scaler = joblib.load(os.path.join(path_to_npys_data, "scaler.save"))
-cols = X.columns
-X = reshape_data(pd.DataFrame(scaler.transform(X), columns=cols))
-X_baseline = reshape_data(pd.DataFrame(scaler.transform(X_baseline), columns=cols))
-
+# cols = X.columns
+# X = reshape_data(pd.DataFrame(scaler.transform(X), columns=cols))
+# X_baseline = reshape_data(pd.DataFrame(scaler.transform(X_baseline), columns=cols))
+X = reshape_data(pd.DataFrame(scaler.transform(X), columns=keys))
+X_baseline = reshape_data(pd.DataFrame(scaler.transform(X_baseline), columns=keys))
 
 # %%
 def get_local_importances(
     X, X_baseline, boxes_list, names_list, target_list, device="cpu"
 ):
-    with open(os.path.join(path_to_npys_data, "keys_lstm.pkl"), "rb") as fp:
-        keys_lstm = pickle.load(fp)
-    network = Crop_LSTM()
-    checkpoint = torch.load(clf_dict["lstm"])
-    loaded_model = Crop_PL(net=network)
-    loaded_model.load_state_dict(checkpoint["state_dict"])
+    model = "lstm"
+    with open(os.path.join(path_to_npys_data, "static_keys.pkl"), "rb") as fp:
+        static_keys = pickle.load(fp)
+    with open(os.path.join(path_to_npys_data, "monthly_keys.pkl"), "rb") as fp:
+        monthly_keys = pickle.load(fp)
+    keys = static_keys + monthly_keys
+
+    network = CropLSTM()
+    # checkpoint = torch.load(clf_dict[model])
+    loaded_model = CropPL(net=network)
+    loaded_model = torch.load(clf_dict[model])
+    loaded_model.eval()
+    # loaded_model.load_state_dict(checkpoint["state_dict"])
     net = loaded_model.net
     net.to(device=device)
+
     order = []
     fis = {}
     for box, name, tar in zip(boxes_list, names_list, target_list):
@@ -171,13 +185,13 @@ def get_local_importances(
             batch_size=128,
         )
         heights_list = []
-        kek = 0
+
         for input, baseline in tqdm(zip(loader_future, loader_baseline)):
             attribution_ig = ig.attribute(input, baselines=baseline, target=tar)
             heights_list.append(attribution_ig)
             
 
-        bars = keys_lstm
+        bars = keys
         heights = torch.cat(heights_list).cpu().mean(dim=0).mean(dim=0).detach().numpy()
         d = {"bars": bars, name: heights}
 
@@ -221,7 +235,7 @@ def plot_local_importances(order, fis):
     ax.set_ylabel("Attribution")
     ax.set_xticks(x + width, order, rotation=90)
     ax.legend(loc="upper left", ncols=3)
-    plt.savefig("../../results/feature_importance/lstm/local_importance.png")
+    plt.savefig("../../data/results/feature_importance/trial_local_importance.png")
 
 
 # %%

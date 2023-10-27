@@ -26,22 +26,21 @@ if not os.path.exists(pathResults):
 softmax = nn.Softmax()
 
 path_to_pickled_models = os.path.join(
-    "/app/ArableLandSuitability", "results", "pickle_models"
+    "/app/ArableLandSuitability", "data", "results", "pickle_models"
 )
 
 clf_dict = {
-    # "lr": os.path.join(path_to_pickled_models, "Logistic_Regression_crops_final.pkl"),
-    "catboost": os.path.join(path_to_pickled_models, "catboost.cb"),
-    "conv_lstm": os.path.join(path_to_pickled_models, "models_selena", "conv_lstm.pkl"),
-    # "transformer": os.path.join(path_to_pickled_models, "models_selena", "transformer_FR.pkl"),
-    # "lgbm": os.path.join(path_to_pickled_models, "LightGBM_crops_final.pkl"),
-    "MLP": os.path.join(path_to_pickled_models, "models_selena", "mlp_FR1.pkl"),
-    # "lstm": os.path.join(path_to_pickled_models, "models_selena", "lstm_FR.pkl"),
+    # "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
+    # "lr": os.path.join(path_to_pickled_models, "logreg.pkl"),
+    "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.pkl"),
+    # "transformer": os.path.join(path_to_pickled_models, "transformer.pkl"),
+    # "MLP": os.path.join(path_to_pickled_models,  "mlp.pkl"),
+    # "lstm": os.path.join(path_to_pickled_models, "lstm.pkl"),
 }
 
 with open(
     os.path.join(
-        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "X_FR.pkl"
+        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "X.pkl"
     ),
     "rb",
 ) as fp:
@@ -50,7 +49,7 @@ with open(
 
 with open(
     os.path.join(
-        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "X_FR_lstm.pkl"
+        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "X_lstm.pkl"
     ),
     "rb",
 ) as fp:
@@ -59,7 +58,7 @@ with open(
 
 with open(
     os.path.join(
-        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "y_FR.pkl"
+        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "y.pkl"
     ),
     "rb",
 ) as fp:
@@ -67,17 +66,17 @@ with open(
     y_mlp = y_mlp["Test"].astype("float32")
 with open(
     os.path.join(
-        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "y_FR_lstm.pkl"
+        "/app/ArableLandSuitability", "data", "processed_files", "pkls", "y_lstm.pkl"
     ),
     "rb",
 ) as fp:
     y_lstm = pickle.load(fp)
     y_lstm = y_lstm["Test"].astype("float32")
 
-with open(
-    os.path.join("/app/ArableLandSuitability", "data", "npys_data", "alpha.pkl"), "rb"
-) as fp:
-    weight = pickle.load(fp)
+# with open(
+#     os.path.join("/app/ArableLandSuitability", "data", "npys_data", "alpha.pkl"), "rb"
+# ) as fp:
+#     weight = pickle.load(fp)
 with open(os.path.join(path_to_npys_data, "X_keys.pkl"), "rb") as fp:
     mlp_keys = pickle.load(fp)
 with open(os.path.join(path_to_npys_data, "monthly_keys.pkl"), "rb") as fp:
@@ -89,13 +88,15 @@ X_dict = {"mlp": X_mlp, "lstm": X_lstm}
 y_dict = {"mlp": y_mlp, "lstm": y_lstm}
 feature_names_dict = {
     "mlp": np.array(mlp_keys),
-    "monthly": np.array(monthly_keys).reshape(X_lstm[0].shape[-2:]),
+    "monthly": np.array(monthly_keys).reshape((X_lstm[0].shape[-1], X_lstm[0].shape[-2])),
     "static": np.array(static_keys),
 }
+
 lstm_keys = set(monthly_keys) | set(static_keys)
 assert sorted(mlp_keys) == sorted(
     lstm_keys
 ), "The sequential and non sequential models have different features"
+
 # FIs
 num_permutations = 2
 sklearn_binary_metric = f1_score

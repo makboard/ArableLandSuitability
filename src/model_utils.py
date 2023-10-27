@@ -4,6 +4,7 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
@@ -573,21 +574,21 @@ class CropTransformer(nn.Module):
     output_size (int): The number of output logits (default: 4).
 
     Inputs:
-    X (torch.Tensor): A tensor of shape (batch_size, sequence_length, input_size) containing the input sequence.
+        X (tuple): X[0] is a tensor of shape (batch_size, sequence_length, input_size) containing the monthly input sequence.
+                    X[1] is a tensor of shape (batch_size, input_size) containing the static input sequence.
 
     Outputs:
     out (torch.Tensor): A tensor of shape (batch_size, output_size) containing the output logits.
-
     """
 
     def __init__(
         self,
-        input_size=10,
-        d_model=10,
-        nhead=5,
-        dim_feedforward=64,
-        hidden_size=54,
-        num_layers=1,
+        input_size=52,
+        d_model=128,
+        nhead=8,
+        dim_feedforward=256,
+        hidden_size=128,
+        num_layers=4,
         dropout=0.2,
         activation="relu",
         output_size=4,
@@ -609,33 +610,37 @@ class CropTransformer(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(d_model, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_size, output_size),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LayerNorm(hidden_size // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout / 2),
+            nn.Linear(hidden_size // 2, output_size),
         )
 
     def forward(self, X):
-        montly_input = X[0]
-        embedded = self.embedding(montly_input)
+        embedded = self.embedding(X)
         encoded = self.transformer_enc(embedded)
         output = encoded[:, -1, :]
-        output = self.classifier(torch.cat((output, X[1]), dim=1))
+        output = self.classifier(output)
         return output
 
 
 class CropLSTM(nn.Module):
     """
-    A PyTorch module implementing a Crop LSTM network.
+    A PyTorch module implementing a CropLSTM network.
 
-    The Crop_LSTM module takes as input a sequence of feature vectors and applies a multi-layer LSTM network
+    The CropLSTM module takes as input a sequence of feature vectors and applies a multi-layer LSTM network
     followed by two linear layers with ReLU activation to predict the output.
 
     Args:
-    input_size (int): The number of expected features in the input (default: 52).
-    hidden_size (int): The number of features in the hidden state (default: 104).
-    num_layers (int): Number of recurrent layers (default: 4).
+    input_size (int): The number of expected features in the input (default: 10).
+    hidden_size_lstm (int): The number of features in the LSTM hidden state (default: 128).
+    hidden_size_mlp (int): The number of features in the MLP hidden layer (default: 128).
+    num_layers (int): Number of recurrent layers (default: 1).
     output_size (int): The number of output logits (default: 4).
 
     Inputs:
@@ -644,14 +649,13 @@ class CropLSTM(nn.Module):
 
     Outputs:
     out (torch.Tensor): A tensor of shape (batch_size, output_size) containing the output logits.
-
     """
 
     def __init__(
         self,
         input_size=10,
-        hidden_size_lstm=128,
-        hidden_size_mlp=300,
+        hidden_size_lstm=64,
+        hidden_size_mlp=128,
         num_layers=1,
         output_size=4,
         dropout=0.2,
@@ -662,22 +666,38 @@ class CropLSTM(nn.Module):
             hidden_size=hidden_size_lstm,
             num_layers=num_layers,
             batch_first=True,
-            dropout=dropout,
-            bidirectional=True,
+            dropout=dropout if num_layers > 1 else 0,
+            bidirectional=False,
         )
+
+        for name, param in self.lstm.named_parameters():
+            if "weight_ih" in name:
+                torch.nn.init.xavier_uniform_(param.data)
+            elif "weight_hh" in name:
+                torch.nn.init.orthogonal_(param.data)
+            elif "bias" in name:
+                param.data.fill_(0)
+
+        self.classifier_input_size = hidden_size_lstm + 44
+
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_size_mlp, hidden_size_mlp),
+            nn.Linear(self.classifier_input_size, hidden_size_mlp),
             nn.BatchNorm1d(hidden_size_mlp),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_size_mlp, output_size),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size_mlp, hidden_size_mlp // 2),
+            nn.BatchNorm1d(hidden_size_mlp // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout / 2),
+            nn.Linear(hidden_size_mlp // 2, output_size),
         )
 
     def forward(self, X):
         output, _ = self.lstm(X[0])
-        # extract only the last hidden
+        # Extract the last hidden state from the bidirectional LSTM output
         output = output[:, -1, :]
-        output = self.classifier(torch.cat((output, X[1]), dim=1))
+        output = torch.cat((output, X[1]), dim=1)
+        output = self.classifier(output)
         return output
 
 

@@ -10,6 +10,7 @@ from src.model_utils import (
 )
 from torch import nn
 from torch.utils.data import DataLoader
+from catboost import CatBoostClassifier
 from tqdm import tqdm
 
 
@@ -116,8 +117,17 @@ def make_prediction_model(X_dict, model, path_to_pkl, batch_size):
     elif model == "catboost":
         # loading the models:
         print("Table ML:", model)
+        # loaded_model = pickle.load(open(path_to_pkl, "rb"))
+        loaded_model = CatBoostClassifier()
+        loaded_model.load_model(path_to_pkl)
+        y_prob = loaded_model.predict_proba(X_dict["mlp"])
+
+    elif model == "lr":
+        # loading the models:
+        print("Table ML:", model)
         loaded_model = pickle.load(open(path_to_pkl, "rb"))
         y_prob = loaded_model.predict_proba(X_dict["mlp"])
+
     else:
         raise NotImplementedError("model not recognized")
     return y_prob
