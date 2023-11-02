@@ -38,10 +38,14 @@ def load_X_and_baseline(data_type, load_pre_saved):
         X = X.replace(-np.inf, 0)
         X = X.fillna(0)
         X = X.replace(np.inf, 0)
+        X = X.replace(-3.3999999521443642e38, 0)
+        X.where(X >= -1e10, 0, inplace=True)
         X_baseline = X_baseline[mlp_keys]
         X_baseline = X_baseline.replace(-np.inf, 0)
         X_baseline = X_baseline.fillna(0)
+        X_baseline = X_baseline.replace(-3.3999999521443642e38, 0)
         X_baseline = X_baseline.replace(np.inf, 0)
+        X.where(X >= -1e10, 0, inplace=True)
 
         # Scaler used for training
         scaler = joblib.load(os.path.join(path_to_npys_data, "scaler.save"))
@@ -50,7 +54,7 @@ def load_X_and_baseline(data_type, load_pre_saved):
         X_baseline = scaler.transform(X_baseline)
         if data_type == "mlp":
             with open(
-                "/app/ArableLandSuitability/data/npys_data/X_future_2040_2050_CNRM.npy",
+                "/app/ArableLandSuitability/data/npys_data/X_future_2040_2050_AVG.npy",
                 "wb",
             ) as fs:
                 np.save(fs, X)
@@ -63,7 +67,7 @@ def load_X_and_baseline(data_type, load_pre_saved):
             X_lstm = reshape_data(pd.DataFrame(X, columns=cols))
             X_baseline_lstm = reshape_data(pd.DataFrame(X_baseline, columns=cols))
             with open(
-                "/app/ArableLandSuitability/data/npys_data/X_lstm_future_2040_2050_CNRM.npy",
+                "/app/ArableLandSuitability/data/npys_data/X_lstm_future_2040_2050_AVG.npy",
                 "wb",
             ) as fs:
                 np.save(fs, X_lstm)
@@ -77,7 +81,7 @@ def load_X_and_baseline(data_type, load_pre_saved):
     else:
         if data_type == "mlp":
             X = np.load(
-                "/app/ArableLandSuitability/data/npys_data/X_future_2040_2050_CNRM.npy"
+                "/app/ArableLandSuitability/data/npys_data/X_future_2040_2050_AVG.npy"
             )
             X_baseline = np.load(
                 "/app/ArableLandSuitability/data/npys_data/X_baseline.npy"
@@ -85,7 +89,7 @@ def load_X_and_baseline(data_type, load_pre_saved):
             return X, X_baseline
         elif data_type == "sequential":
             X_lstm = np.load(
-                "/app/ArableLandSuitability/data/npys_data/X_lstm_future_2040_2050_CNRM.npy"
+                "/app/ArableLandSuitability/data/npys_data/X_lstm_future_2040_2050_AVG.npy"
             )
             X_baseline_lstm = np.load(
                 "/app/ArableLandSuitability/data/npys_data/X_baseline_lstm.npy"
@@ -182,20 +186,11 @@ delta_lat = (top - bottom) / height
 # defining paths
 path_to_npys_data = os.path.join("data", "npys_data")
 
-pathFeatures = os.path.join(path_to_npys_data, "2040_2050", "features_ssp245_CNRM.npy")
+pathFeatures = os.path.join(path_to_npys_data, "2040_2050", "features_ssp245_AVG.npy")
 pathFeaturesBaseline = os.path.join(path_to_npys_data, "features_initial_data.npy")
 pathResults = os.path.join("results", "2040_2050")
 pathMorf = os.path.join(path_to_npys_data, "features_morf_data.npy")
 
-# %%
-# Features
-data_type = "mlp"
-if data_type == "mlp":
-    X, X_baseline = load_X_and_baseline(data_type, True)
-elif data_type == "sequential":
-    X_lstm, X_baseline_lstm = load_X_and_baseline(data_type, True)
-else:
-    raise NotImplementedError("data_type should be either `mlp` or `sequential`")
 with open(os.path.join(path_to_npys_data, "X_keys.pkl"), "rb") as fp:
     mlp_keys = pickle.load(fp)
 with open(os.path.join(path_to_npys_data, "monthly_keys.pkl"), "rb") as fp:
@@ -203,11 +198,7 @@ with open(os.path.join(path_to_npys_data, "monthly_keys.pkl"), "rb") as fp:
 with open(os.path.join(path_to_npys_data, "static_keys.pkl"), "rb") as fp:
     static_keys = pickle.load(fp)
 
-# feature_names_dict = {
-#     "mlp": np.array(mlp_keys),
-#     "monthly": np.array(monthly_keys),
-#     "static": np.array(static_keys),
-# }
+
 lstm_keys_ = ["_".join(v.split("_")[:-1]) for v in monthly_keys]
 lstm_keys = []
 for v in lstm_keys_:
@@ -215,14 +206,21 @@ for v in lstm_keys_:
         lstm_keys.append(v)
 for v in static_keys:
     lstm_keys.append(v)
-# lstm_keys = set(monthly_keys) | set(static_keys)
-# assert sorted(mlp_keys) == sorted(
-#     lstm_keys
-# ), "The sequential and non sequential models have different features"
 mlp_keys.remove("latitude")
 mlp_keys.remove("longitude")
 lstm_keys.remove("latitude")
 lstm_keys.remove("longitude")
+
+# %%
+# Features
+data_type = "sequential"
+pre_saved = False
+if data_type == "mlp":
+    X, X_baseline = load_X_and_baseline(data_type, pre_saved)
+elif data_type == "sequential":
+    X_lstm, X_baseline_lstm = load_X_and_baseline(data_type, pre_saved)
+else:
+    raise NotImplementedError("data_type should be either `mlp` or `sequential`")
 
 
 # %%
@@ -287,8 +285,26 @@ def get_local_importances(
             heights_list.append(attribution_ig)
 
         bars = keys
+        bars_no_months = ["_".join(v.split("_")[:-1]) if "_M" in v else v for v in bars]
+        bars_no_months = list(dict.fromkeys(bars_no_months))
         if model == "mlp":
-            heights = torch.cat(heights_list).cpu().mean(dim=0).detach().numpy()
+            heights = []
+            heights_catted = torch.cat(heights_list).mean(dim=0).cpu().numpy()
+            bars_no_months = [
+                "_".join(v.split("_")[:-1]) if "_M" in v else v for v in bars
+            ]
+            bars_no_months = list(dict.fromkeys(bars_no_months))
+            for bar_name in bars_no_months:
+                try:
+                    i_start = bars.index(bar_name + "_M1")
+                    i_end = bars.index(bar_name + "_M12") + 1
+                    heights.append(heights_catted[i_start:i_end].mean())
+                except ValueError:
+                    idx = bars.index(bar_name)
+                    heights.append(heights_catted[idx])
+            heights = np.array(heights)
+            bars = bars_no_months
+            # heights = torch.cat(heights_list).cpu().mean(dim=0).detach().numpy()
         else:
             heights = (
                 torch.cat(heights_list).cpu().mean(dim=0).mean(dim=0).detach().numpy()
@@ -352,12 +368,22 @@ ee_bl = (25, 52)
 ee_tr = (38, 58)
 ru_bl = (60, 55)
 ru_tr = (70, 60)
-clf_dict = {
-    "mlp": "/app/ArableLandSuitability/results/pickle_models/MLP.ckpt",
-    # "lstm": "/app/ArableLandSuitability/results/pickle_models/LSTM.ckpt",
-    # "transformer": "/app/ArableLandSuitability/results/pickle_models/transformer.ckpt",
-    # "conv_lstm": "/app/ArableLandSuitability/results/pickle_models/conv_lstm.ckpt",
-}
+if data_type == "sequential":
+    clf_dict = {
+        # "mlp": "/app/ArableLandSuitability/results/pickle_models/MLP.ckpt",
+        "lstm": "/app/ArableLandSuitability/results/pickle_models/LSTM.ckpt",
+        "transformer": "/app/ArableLandSuitability/results/pickle_models/transformer.ckpt",
+        "conv_lstm": "/app/ArableLandSuitability/results/pickle_models/conv_lstm.ckpt",
+    }
+elif data_type == "mlp":
+    clf_dict = {
+        "mlp": "/app/ArableLandSuitability/results/pickle_models/MLP.ckpt",
+        # "lstm": "/app/ArableLandSuitability/results/pickle_models/LSTM.ckpt",
+        # "transformer": "/app/ArableLandSuitability/results/pickle_models/transformer.ckpt",
+        # "conv_lstm": "/app/ArableLandSuitability/results/pickle_models/conv_lstm.ckpt",
+    }
+else:
+    raise NotImplementedError("type should be `mlp` or `sequential`")
 if data_type == "mlp":
     assert (
         ("mlp" in clf_dict.keys())
@@ -383,7 +409,7 @@ for model_key, model_pkl_path in tqdm(clf_dict.items()):
             X_baseline,
             [(ru_bl, ru_tr), (china_bl, china_tr), (ee_bl, ee_tr)],
             ["N-Russia", "NE-China", "E-EU"],
-            target_list=[3, 1, 2],
+            target_list=[2, 1, 3],
             device=1,
         )
 
@@ -397,7 +423,7 @@ for model_key, model_pkl_path in tqdm(clf_dict.items()):
             X_baseline_lstm,
             [(ru_bl, ru_tr), (china_bl, china_tr), (ee_bl, ee_tr)],
             ["N-Russia", "NE-China", "E-EU"],
-            target_list=[3, 1, 2],
+            target_list=[2, 1, 3],
             device=1,
         )
 
