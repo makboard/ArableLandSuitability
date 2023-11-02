@@ -138,6 +138,23 @@ def get_feature_lists(X: pd.DataFrame) -> Tuple[List[str], List[str]]:
     return list_of_monthly_features, list_of_static_features
 
 
+def get_feature_lists_alt(X: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Get lists of monthly and static features via "M" at the end of feature name.
+
+    Args:
+        X (pd.DataFrame): Initial features
+
+    Returns:
+        Tuple[List[str], List[str]]: Lists of monthly and static features
+    """
+    # static_keywords = ["DEM", "morf", "12m_SPI"]
+
+    list_of_monthly_features = [v for v in X.columns if ("M" in v.split("_")[-1])]
+    list_of_static_features = [v for v in X.columns if not ("M" in v.split("_")[-1])]
+
+    return list_of_monthly_features, list_of_static_features
+
+
 def reshape_data(X: pd.DataFrame) -> np.ndarray:
     """Prepare dataset in shape (N, num_of_monthly + num_of_static, 12)
     N - number of samples
@@ -151,7 +168,7 @@ def reshape_data(X: pd.DataFrame) -> np.ndarray:
     Returns:
         np.ndarray: Modified dataset
     """
-    list_of_monthly_features, list_of_static_features = get_feature_lists(X)
+    list_of_monthly_features, list_of_static_features = get_feature_lists_alt(X)
 
     # Create separate DataFrames for monthly and static features
     X_monthly = X.drop(columns=list_of_static_features)
@@ -776,7 +793,7 @@ class CropLSTM(nn.Module):
             batch_first=True,
             bidirectional=False,
         )
-        
+
         # LSTM weights initialization
         self._initialize_lstm_weights()
 
@@ -1060,3 +1077,178 @@ class CropPL(pl.LightningModule):
                 },
             }
         return {"optimizer": optimizer}
+
+class CroplandDataModuleMLP(pl.LightningDataModule):
+    """
+    This module defines a LightningDataModule class for loading and
+        preparing data for a Cropland classification model using MLP architecture.
+    Args:
+    X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
+    y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
+    batch_size (int): The batch size to be used for training and evaluation. Default is 128.
+    """
+
+    def __init__(
+        self,
+        X: dict,
+        y: dict,
+        batch_size: int = 128,
+        num_workers: int = 4,
+        num_classes: int = 4,
+    ):
+        super().__init__()
+        assert (num_classes == 4) or (
+            num_classes == 2
+        ), "Only 4 or 2 classes are supported"
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.X_train, self.X_val, self.X_test = (
+            torch.FloatTensor(X["Train"]),
+            torch.FloatTensor(X["Val"]),
+            torch.FloatTensor(X["Test"]),
+        )
+        if num_classes == 4:
+            self.y_train, self.y_val, self.y_test = (
+                torch.LongTensor(y["Train"]),
+                torch.LongTensor(y["Val"]),
+                torch.LongTensor(y["Test"]),
+            )
+        elif num_classes == 2:
+            self.y_train, self.y_val, self.y_test = (
+                torch.ShortTensor(
+                    np.stack(
+                        (y["Train"][:, 0], y["Train"][:, 1:].sum(axis=-1)), axis=-1
+                    )
+                ),
+                torch.ShortTensor(
+                    np.stack((y["Val"][:, 0], y["Val"][:, 1:].sum(axis=-1)), axis=-1)
+                ),
+                torch.ShortTensor(
+                    np.stack((y["Test"][:, 0], y["Test"][:, 1:].sum(axis=-1)), axis=-1)
+                ),
+            )
+
+        self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
+
+    def prepare_data(self):
+        # Calculate class weights for imbalanced dataset
+        _, counts = torch.unique(self.y_train.argmax(dim=1), return_counts=True)
+        class_weights = 1.0 / torch.sqrt(counts.float())
+        loss_weights = class_weights / class_weights.sum()
+        ds = self.y_train.argmax(dim=1)
+        weights = [loss_weights[i] for i in ds]
+        self.sampler = CustomWeightedRandomSampler(
+            weights, num_samples=len(weights), replacement=True
+        )
+
+    def setup(self, stage=None):
+        if stage == "fit" or stage is None:
+            self.dataset_train = TensorDataset(self.X_train, self.y_train)
+            self.dataset_val = TensorDataset(self.X_val, self.y_val)
+
+        if stage == "test" or stage is None:
+            self.dataset_test = TensorDataset(self.X_test, self.y_test)
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.dataset_train,
+            # shuffle=True,
+            sampler=self.sampler,
+            **self.dl_dict,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(self.dataset_val, **self.dl_dict)
+
+    def test_dataloader(self):
+        return DataLoader(self.dataset_test, **self.dl_dict)
+
+
+class CroplandDataModuleLSTM(pl.LightningDataModule):
+    """
+    This module defines a LightningDataModule class for loading and preparing data for a Cropland classification model using LSTM architecture.
+
+    Args:
+    X (dict): A dictionary containing the input data for Train, Validation, and Test sets.
+    y (dict): A dictionary containing the corresponding target values for Train, Validation, and Test sets.
+    batch_size (int): The batch size to be used for training and evaluation. Default is 128.
+    """
+
+    def __init__(self, X: dict, y: dict, batch_size: int = 128, num_workers: int = 4):
+        super().__init__()
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.X_monthly_train, self.X_monthly_val, self.X_monthly_test = (
+            torch.FloatTensor(X["Train"][0]),
+            torch.FloatTensor(X["Val"][0]),
+            torch.FloatTensor(X["Test"][0]),
+        )
+        self.X_static_train, self.X_static_val, self.X_static_test = (
+            torch.FloatTensor(X["Train"][1]),
+            torch.FloatTensor(X["Val"][1]),
+            torch.FloatTensor(X["Test"][1]),
+        )
+        self.y_train, self.y_val, self.y_test = (
+            torch.LongTensor(y["Train"]),
+            torch.LongTensor(y["Val"]),
+            torch.LongTensor(y["Test"]),
+        )
+
+        self.dl_dict = {"batch_size": self.batch_size, "num_workers": self.num_workers}
+
+    def prepare_data(self):
+        # Calculate class weights for imbalanced dataset
+        _, counts = torch.unique(self.y_train.argmax(dim=1), return_counts=True)
+        class_weights = 1.0 / torch.sqrt(counts.float())
+        loss_weights = class_weights / class_weights.sum()
+        ds = self.y_train.argmax(dim=1)
+        weights = [loss_weights[i] for i in ds]
+        self.sampler = CustomWeightedRandomSampler(
+            weights, num_samples=len(weights), replacement=True
+        )
+
+    def setup(self, stage=None):
+        if stage == "fit" or stage is None:
+            self.dataset_train = CroplandDataset(
+                (self.X_monthly_train, self.X_static_train), self.y_train
+            )
+            self.dataset_val = CroplandDataset(
+                (self.X_monthly_val, self.X_static_val), self.y_val
+            )
+
+        if stage == "test" or stage is None:
+            self.dataset_test = CroplandDataset(
+                (self.X_monthly_test, self.X_static_test), self.y_test
+            )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.dataset_train,
+            #   shuffle=True,
+            pin_memory=True,
+            sampler=self.sampler,
+            **self.dl_dict,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(self.dataset_val, pin_memory=True, **self.dl_dict)
+
+    def test_dataloader(self):
+        return DataLoader(self.dataset_test, pin_memory=True, **self.dl_dict)
+
+
+class CustomWeightedRandomSampler(WeightedRandomSampler):
+    """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
+
+    def __init__(self, weights, num_samples, replacement=True):
+        super().__init__(weights, num_samples, replacement=replacement)
+
+    def __iter__(self):
+        rand_tensor = np.random.choice(
+            range(0, len(self.weights)),
+            size=self.num_samples,
+            p=self.weights.numpy() / torch.sum(self.weights).numpy(),
+            replace=self.replacement,
+        )
+        rand_tensor = torch.from_numpy(rand_tensor)
+        return iter(rand_tensor.tolist())
