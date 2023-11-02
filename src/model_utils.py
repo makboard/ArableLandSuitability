@@ -153,19 +153,24 @@ def reshape_data(X: pd.DataFrame) -> np.ndarray:
     """
     list_of_monthly_features, list_of_static_features = get_feature_lists(X)
 
-    X_monthly = X[list_of_monthly_features]
-    X_static = X[list_of_static_features].to_numpy()
-
-    num_samples = X_monthly.shape[0]
-    num_monthly = len(list_of_monthly_features) // 12
-    num_static = len(list_of_static_features)
-
-    X_monthly_reshaped = X_monthly.to_numpy().reshape(num_samples, num_monthly, 12)
-
-    # Create an empty output ndarray and fill it
-    X_new = np.empty((num_samples, 12, num_monthly + num_static))
-    X_new[:, :, :num_monthly] = X_monthly_reshaped
-    X_new[:, :, num_monthly:] = X_static[:, np.newaxis, :]
+    # Create separate DataFrames for monthly and static features
+    X_monthly = X.drop(columns=list_of_static_features)
+    X_static = X.drop(columns=list_of_monthly_features)
+    # Reshape monthly features
+    X_tmp = X_monthly.to_numpy().reshape(
+        X_monthly.shape[0], len(list_of_monthly_features) // 12, 12
+    )
+    # Create an empty output ndarray
+    X_new = np.empty(
+        (
+            X_monthly.shape[0],
+            12,
+            len(list_of_monthly_features) // 12 + len(list_of_static_features),
+        )
+    )
+    # Fill the output ndarray.
+    for i in range(12):
+        X_new[:, i, :] = np.concatenate([X_tmp[:, :, i], X_static.to_numpy()], axis=1)
 
     return X_new
 
