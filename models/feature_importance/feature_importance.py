@@ -16,6 +16,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from sklearn.metrics import f1_score
+from catboost import CatBoostClassifier
 
 from tqdm import tqdm
 from copy import deepcopy
@@ -27,19 +28,20 @@ sklearn_binary_metric = f1_score
 
 # defining paths
 path_to_npys_data = os.path.join("/ArableLandSuitability", "data", "npys_data")
-path_to_pkls = os.path.join("/ArableLandSuitability", "data", "processed_files", "pkls")
+path_to_pkls = os.path.join("/app/ArableLandSuitability", "data", "processed_files", "pkls")
 pathResults = os.path.join("/ArableLandSuitability", "results", "feature_importance")
 if not os.path.exists(pathResults):
     os.makedirs(pathResults)
-path_to_pickled_models = os.path.join("/ArableLandSuitability", "results", "pickle_models")
+path_to_pickled_models = os.path.join("/app/ArableLandSuitability", "results", "pickle_models")
 
 clf_dict = {
     # xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
+    "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
     # "lr": os.path.join(path_to_pickled_models, "logreg.pkl"),
     # "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
     # "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
     # "mlp": os.path.join(path_to_pickled_models,  "MLP.ckpt"),
-    "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
+    # "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
 }
 
 with open(
@@ -73,6 +75,17 @@ feature_names_dict = {
 
 # Define a function to calculate model precision_score
 def estimate_metrics(y_probs, y, sklearn_binary_metric):
+    """
+    Calculates metric
+    
+    Args:
+        y_probs (Dict[str, np.ndarray]): Dictionary with name of a model and predicted probabilities.
+        y (np.ndarray): Ground truth labels for test data.
+        sklearn_binary_metric: Sklearn metric.
+
+    Returns:
+        loaded_model: Prefitted model.
+    """
     scores = {}
     for key in y_probs.keys():
         if (key == "lstm") or (key == "transformer") or (key == "conv_lstm"):
@@ -85,20 +98,59 @@ def estimate_metrics(y_probs, y, sklearn_binary_metric):
             )
     return scores
 
-def predict_prob(joint_dict: dict,
-                X_test: np.ndarray,
-                X_test_t: torch.Tensor,
-                X_lstm: torch.Tensor,
-                y_test: np.ndarray) -> dict:
+
+def load_model(model_name, model_path):
     """
-    Evaluates models on the test data.
+    Loads a model from the path.
     
     Args:
+        model_name (str): A name of the model.
+        model_path (str): path to model.
+
+    Returns:
+        loaded_model: Prefitted model.
+    """
+    if model_name in ["mlp", "lstm", "transformer", "conv_lstm"]:
+        if model_name == "mlp":
+            network = CropMLP()
+        elif model_name == "lstm":
+            network = CropLSTM()
+        elif model_name == "transformer":
+            network = CropTransformer()
+        elif model_name == "conv_lstm":
+            network = CropConvLSTM()
+            
+        checkpoint = torch.load(model_path)
+        loaded_model = CropPL(net=network)
+        loaded_model.load_state_dict(checkpoint["state_dict"])
+        loaded_model.eval()
+
+    elif model_name=="catboost":
+            loaded_model = CatBoostClassifier()
+            loaded_model.load_model(model_path)
+    else:
+            loaded_model = pickle.load(open(model_path, "rb"))
+    
+    return loaded_model
+
+
+def predict_prob(model_name,
+                loaded_model,
+                X_test: np.ndarray,
+                X_test_t: torch.Tensor,
+                X_lstm: torch.Tensor) -> dict:
+                # y_test: np.ndarray
+    """
+    Evaluates model on the test data.
+    
+    Args:
+        model_name (str): A name of the model.
+        loaded_model: Prefitted model.
         joint_dict (Dict[str, str]): A dictionary with model names as keys and paths to their serialized data as values.
         X_test (np.ndarray): Test data.
         X_test_t (torch.Tensor): Tensor representation of test data.
         X_lstm (torch.Tensor): LSTM processed data for testing.
-        y_test (np.ndarray): Ground truth labels for test data.
+        # y_test (np.ndarray): Ground truth labels for test data.
     
     Returns:
         Dict[str, np.ndarray]: A dictionary with model names as keys and their predicted probabilities as values.
@@ -107,35 +159,24 @@ def predict_prob(joint_dict: dict,
     softmax = nn.Softmax(dim=1)
     trainer = pl.Trainer(accelerator="gpu", devices=[0])
 
-    for model in tqdm(joint_dict):
-        if model in ["mlp", "lstm", "transformer", "conv_lstm"]:
-            if model == "mlp":
-                network = CropMLP()
-            elif model == "lstm":
-                network = CropLSTM()
-            elif model == "transformer":
-                network = CropTransformer()
-            elif model == "conv_lstm":
-                network = CropConvLSTM()
-                
-            checkpoint = torch.load(joint_dict[model])
-            loaded_model = CropPL(net=network)
-            loaded_model.load_state_dict(checkpoint["state_dict"])
-            loaded_model.eval()
+    if model_name in ["mlp", "lstm", "transformer", "conv_lstm"]:
 
-            # Use appropriate input tensor for the model
-            input_tensor = X_lstm if model in ["lstm", "transformer", "conv_lstm"] else X_test_t
-            predictions = torch.cat(
-                trainer.predict(loaded_model, DataLoader(input_tensor, batch_size=2048)), dim=0
-            )
-            y_prob = softmax(predictions.float()).numpy()
-            y_pred = np.argmax(y_prob, 1)
-            y_probs[model] = y_prob
-        else:
-            loaded_model = pickle.load(open(joint_dict[model], "rb"))
-            y_pred = loaded_model.predict(X_test)
-            y_prob = loaded_model.predict_proba(X_test)
-            y_probs[model] = y_prob
+        # Use appropriate input tensor for the model
+        input_tensor = X_lstm if model_name in ["lstm", "transformer", "conv_lstm"] else X_test_t
+        predictions = torch.cat(
+            trainer.predict(loaded_model, DataLoader(input_tensor, batch_size=2048)), dim=0
+        )
+        y_prob = softmax(predictions.float()).numpy()
+        # y_pred = np.argmax(y_prob, 1)
+        y_probs[model_name] = y_prob
+
+    elif model_name =="catboost":
+        y_prob = loaded_model.predict_proba(X_test)
+        y_probs[model_name] = y_prob
+
+    else:
+        y_prob = loaded_model.predict_proba(X_test)
+        y_probs[model_name] = y_prob
 
     return y_probs
 
@@ -158,23 +199,25 @@ def estimate_feature_importance_models(clf_dict,
     """
 
     # Calculate original score
-    print("Predicting on test data")
-    # y_probs = model_predict.make_predictions(X_dict, clf_dict)
-    y_probs = predict_prob (clf_dict,
+    for model_name in tqdm(clf_dict):
+        print("Loading model")
+        loaded_model = load_model(model_name, clf_dict[model_name])
+        print("Predicting on test data")
+    
+        y_probs = predict_prob (model_name,
+                            loaded_model,
                             X_dict["mlp"],
                             torch.tensor(X_dict["mlp"]),
-                            torch.tensor(X_dict["lstm"]),
-                            y)
+                            torch.tensor(X_dict["lstm"]))
 
-    original_score = estimate_metrics(y_probs, y, sklearn_binary_metric)
+        original_score = estimate_metrics(y_probs, y, sklearn_binary_metric)
 
-    # Initialize an array to store the feature importance scores
-    feature_importance_scores = {
-        model_name: {} for model_name in y_probs.keys()
-        }
+        # Initialize an array to store the feature importance scores
+        feature_importance_scores = {
+            model_name: {} for model_name in y_probs.keys()
+            }
 
-    # Loop over each model
-    for model_name in clf_dict.keys():
+        # Collect list of features
         if model_name=="lstm" or model_name=="conv_lstm" or model_name=="transformer":
             feature_names = feature_names_dict["lstm"]
         else:
@@ -198,11 +241,10 @@ def estimate_feature_importance_models(clf_dict,
                     np.random.shuffle(shuffled_input_data["mlp"][:, feature_dim])
 
                 # make prediction
-                shuffled_preds = predict_prob(clf_dict,
+                shuffled_preds = predict_prob(model_name, loaded_model,
                                             shuffled_input_data["mlp"],
                                             torch.tensor(shuffled_input_data["mlp"]),
-                                            torch.tensor(shuffled_input_data["lstm"]),
-                                            y)
+                                            torch.tensor(shuffled_input_data["lstm"]))
 
                 # for each model estimate chosen metric
                 shuffled_score = estimate_metrics(
@@ -220,12 +262,11 @@ def estimate_feature_importance_models(clf_dict,
                         importance_score
                     )
             
-    # Save
-    for model_name in y_probs.keys():
+        # Save metrics
         filename = "feature_importance_{}.pkl".format(model_name)
         with open(
-        os.path.join(pathResults, filename), "wb"
-    ) as fs:
+            os.path.join(pathResults, filename), "wb"
+        ) as fs:
             pickle.dump(feature_importance_scores[model_name], fs)
 
 
