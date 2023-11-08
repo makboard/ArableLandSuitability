@@ -5,20 +5,24 @@ import sys
 
 sys.path.append(os.path.join(".."))
 
-import gc
-import glob
-import os
-import pickle
-
 import joblib
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from src.model_utils import Crop_LSTM, Crop_MLP, Crop_PL, reshape_data
+from src.model_utils import (
+    CropConvLSTM,
+    CropLSTM,
+    CropMLP,
+    CropPL,
+    CropTransformer,
+    reshape_data,
+)
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
+import glob
+from catboost import CatBoostClassifier
 
 # %% [markdown]
 # ## Paths to data
@@ -27,23 +31,60 @@ from tqdm import tqdm
 # defining paths
 path_to_npys_data = os.path.join("..", "data", "npys_data")
 
-pathFeatures = os.path.join(path_to_npys_data, "2040_2050")
-pathResults = os.path.join("..", "results", "2040_2050")
+pathFeatures = os.path.join(path_to_npys_data, "2022_2032")
+pathResults = os.path.join("..", "results", "2022_2032")
 pathMorf = os.path.join(path_to_npys_data, "features_morf_data.npy")
 
-softmax = nn.Softmax()
+softmax = nn.Softmax(dim=1)
 
+with open(
+    os.path.join("..", "data", "processed_files", "pkls", "X_down_lstm.pkl"), "rb"
+) as fp:
+    X_lstm = pickle.load(fp)
+
+with open(
+    os.path.join("..", "data", "processed_files", "pkls", "X_down.pkl"), "rb"
+) as fp:
+    X = pickle.load(fp)
+
+with open(
+    os.path.join("..", "data", "processed_files", "pkls", "y_down.pkl"), "rb"
+) as fp:
+    y = pickle.load(fp)
+
+
+X_test = X["Test"]
+X_lstm_test = X_lstm["Test"]
+y_test = y["Test"]
+
+del X_lstm, X, y
+
+test_loader = DataLoader(
+    TensorDataset(
+        torch.tensor(X_test, dtype=torch.float),
+        torch.tensor(y_test, dtype=torch.long).argmax(1),
+    ),
+    batch_size=8192,
+)
+test_loader_lstm = DataLoader(
+    TensorDataset(
+        torch.tensor(X_lstm_test, dtype=torch.float),
+        torch.tensor(y_test, dtype=torch.long).argmax(1),
+    ),
+    batch_size=8192,
+)
 # %%
 path_to_pickled_models = os.path.join("..", "results", "pickle_models")
 
 clf_dict = {
-    "lr": os.path.join(
-        path_to_pickled_models, "Logistic_Regression_crops_final.pkl"
-    ),
-    "xgbt": os.path.join(path_to_pickled_models, "XGBoost_crops_final.pkl"),
-    "lgbm": os.path.join(path_to_pickled_models, "LightGBM_crops_final.pkl"),
-    "MLP": os.path.join(path_to_pickled_models, "Crop_MLP.ckpt"),
-    "lstm": os.path.join(path_to_pickled_models, "Crop_LSTM.ckpt"),
+    "lr": os.path.join(path_to_pickled_models, "Logistic_Regression.pkl"),
+    "lgbm": os.path.join(path_to_pickled_models, "LightGBM.pkl"),
+    "xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
+    "mlp": os.path.join(path_to_pickled_models, "MLP.ckpt"),
+    "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
+    "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
+    "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
+    "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
 }
 
 
@@ -60,41 +101,36 @@ def make_predictions(X, clf_dict):
         values - array of probabilities
     """
     y_probs = dict()
-
+    softmax = nn.Softmax(dim=1)
+    # create an instance of pl.Trainer
+    trainer = pl.Trainer(accelerator="gpu", devices=[3])
     for model in tqdm(clf_dict):
-        if model == "MLP":
-            network = Crop_MLP()
+        if model == "mlp":
+            network = CropMLP()
             checkpoint = torch.load(clf_dict[model])
-            loaded_model = Crop_PL(net=network)
+            loaded_model = CropPL(net=network)
             loaded_model.load_state_dict(checkpoint["state_dict"])
             loaded_model.eval()
-
-            # create an instance of pl.Trainer
-            trainer = pl.Trainer(gpus=1)
 
             # check metrics
             predictions = torch.cat(
                 trainer.predict(
                     loaded_model,
                     DataLoader(
-                        torch.tensor(X.values, dtype=torch.float), batch_size=2048
+                        torch.tensor(X.values, dtype=torch.float), batch_size=8192
                     ),
                 ),
                 dim=0,
             )
-            softmax = nn.Softmax(dim=1)
             y_prob = softmax(predictions.float()).numpy()
             y_probs[model] = y_prob
 
         elif model == "lstm":
-            network = Crop_LSTM()
+            network = CropLSTM()
             checkpoint = torch.load(clf_dict[model])
-            loaded_model = Crop_PL(net=network)
+            loaded_model = CropPL(net=network)
             loaded_model.load_state_dict(checkpoint["state_dict"])
             loaded_model.eval()
-
-            # create an instance of pl.Trainer
-            trainer = pl.Trainer(gpus=1)
 
             # check metrics
             predictions = torch.cat(
@@ -107,10 +143,53 @@ def make_predictions(X, clf_dict):
                 ),
                 dim=0,
             )
-            softmax = nn.Softmax(dim=1)
             y_prob = softmax(predictions.float()).numpy()
             y_probs[model] = y_prob
+        elif model == "transformer":
+            network = CropTransformer()
+            checkpoint = torch.load(clf_dict[model])
+            loaded_model = CropPL(net=network)
+            loaded_model.load_state_dict(checkpoint["state_dict"])
+            loaded_model.eval()
 
+            # check metrics
+            predictions = torch.cat(
+                trainer.predict(
+                    loaded_model,
+                    DataLoader(
+                        torch.tensor(reshape_data(X), dtype=torch.float),
+                        batch_size=2048,
+                    ),
+                ),
+                dim=0,
+            )
+            y_prob = softmax(predictions.float()).numpy()
+            y_probs[model] = y_prob
+        elif model == "conv_lstm":
+            network = CropConvLSTM()
+            checkpoint = torch.load(clf_dict[model])
+            loaded_model = CropPL(net=network)
+            loaded_model.load_state_dict(checkpoint["state_dict"])
+            loaded_model.eval()
+
+            # Make prediction
+            predictions = torch.cat(
+                trainer.predict(
+                    loaded_model,
+                    DataLoader(
+                        torch.tensor(reshape_data(X), dtype=torch.float),
+                        batch_size=2048,
+                    ),
+                ),
+                dim=0,
+            )
+            y_prob = softmax(predictions.float()).numpy()
+            y_probs[model] = y_prob
+        elif model == "catboost":
+            loaded_model = CatBoostClassifier()
+            loaded_model.load_model(clf_dict[model])
+            y_prob = loaded_model.predict_proba(X)
+            y_probs[model] = y_prob
         else:
             # loading the models:
             loaded_model = pickle.load(open(clf_dict[model], "rb"))
@@ -123,11 +202,21 @@ def make_predictions(X, clf_dict):
 # %% [markdown]
 # ## Predictions of the models
 
+use_avg = True
+if use_avg:
+    paths = [x for x in glob.glob(os.path.join(pathFeatures, "*.npy")) if "AVG" in x]
+else:
+    paths = [
+        x for x in glob.glob(os.path.join(pathFeatures, "*.npy")) if "AVG" not in x
+    ]
+
 # %%
-for path in tqdm(glob.glob(os.path.join(pathFeatures, "*.npy"))):
+for path in tqdm(paths):  # [os.path.join(pathFeatures, "features_ssp245_AVG.npy")]
     # Loading Features
     X = pd.DataFrame.from_dict(np.load(path, allow_pickle=True), orient="columns")
-    with open(os.path.join(path_to_npys_data, "keys.pkl"), "rb") as fp:
+    with open(
+        os.path.join("..", "data", "processed_files", "pkls", "keys.pkl"), "rb"
+    ) as fp:
         keys = pickle.load(fp)
     # load morf features separatly
     morf = pd.DataFrame.from_dict(
@@ -136,7 +225,9 @@ for path in tqdm(glob.glob(os.path.join(pathFeatures, "*.npy"))):
     X = pd.concat([X, morf], axis=1)
     # make specific order of features
     X = X[keys]
-    X = X.replace(-np.inf, 0)
+    X.replace(
+        [-float("inf"), float("inf"), np.nan, -3.3999999521443642e38], 0, inplace=True
+    )
     # Define scaler based on whole dataset
     scaler = joblib.load(os.path.join(path_to_npys_data, "scaler.save"))
     # Normalization using minmax scaler
@@ -158,25 +249,3 @@ for path in tqdm(glob.glob(os.path.join(pathFeatures, "*.npy"))):
             "wb",
         ) as f:
             pickle.dump(probabilities[model], f, protocol=4)
-
-
-# %% [markdown]
-# ## Average probability based on different climate models
-
-# %%
-cmcc = np.load(
-    os.path.join("..", "results", "2040_2050", "lstm_ssp245" + "_CMCC_prob.npy"), allow_pickle=True
-)
-cnrm = np.load(
-    os.path.join("..", "results", "2040_2050", "lstm_ssp245" + "_CNRM_prob.npy"), allow_pickle=True
-)
-mri = np.load(
-    os.path.join("..", "results", "2040_2050", "lstm_ssp245" + "_MRI_prob.npy"), allow_pickle=True
-)
-
-average = np.mean([cmcc, cnrm, mri], axis=0)
-with open(
-    os.path.join("..", "results", "2040_2050", "lstm_ssp245" + "_average_prob.npy"),
-    "wb",
-) as f:
-    pickle.dump(average, f, protocol=4)
