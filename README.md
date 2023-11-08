@@ -3,11 +3,11 @@ This repository contains machine learning models for estimating cropland types (
 
 ## Dependencies
 
-* Dependencies are listed in environment.yml file.
+* Dependencies are listed in requirements.txt file.
 
 ## Data
 
-The data required for the project is available in the `data` folder. The folder contains various files in the formats of .tif and .npy. The data has been preprocessed and stored in these files. Additionally, the `results` folder contains predictions, related plots, and models. You can access the data and results folders from the [Google Drive Folder](https://drive.google.com/drive/folders/1AJ71bERr-eZZEkuWkEu5yYRo2t519tTU). 
+The data required for the project is available in the `data` folder. The folder contains various files in the formats of .tif and .npy. The data has been preprocessed and stored in these files.  You can access the data from the [Google Drive Folder](https://drive.google.com/drive/folders/1AJ71bERr-eZZEkuWkEu5yYRo2t519tTU). 
 
 The project directory structure should be organized as follows (tree depth is limited by 2):
 ``` bash
@@ -16,16 +16,17 @@ The project directory structure should be organized as follows (tree depth is li
 |-- README.md
 |-- data
 |   |-- climate_data
-|   |-- features_comparison
 |   |-- geo_data
 |   |-- npys_data
 |   |-- processed_files
 |   `-- target
 |-- data_processing
-|   |-- GFSAD_heatmaps.ipynb
-|   |-- compare_past_and_future_datasets.py
+|   |-- aggregate_ssps.py
+|   |-- climate_analysis.ipynb
 |   |-- data_preprocessing.ipynb
 |   |-- data_processing.ipynb
+|   |-- GFSAD_heatmaps.ipynb
+|   |-- plot_feature_importance.ipynb
 |   |-- plot_predicted_croplands.ipynb
 |   |-- save_processed_dataset.ipynb
 |   `-- target_variable.ipynb
@@ -34,19 +35,24 @@ The project directory structure should be organized as follows (tree depth is li
 |   `-- requirements.txt
 |-- models
 |   |-- feature_importance
+|   |-- catboost_clf.py
+|   |-- conv_lstm_pl.py
+|   |-- lstm_pl.py
+|   |-- mlp_pl.py
 |   |-- ml_models_croplands.py
+|   |-- transformer_pl.py
+|   |-- meta_model.ipynb
 |   |-- models_test_metrics.ipynb
-|   |-- nn_linear_pl.ipynb
-|   |-- nn_lstm_pl.ipynb
 |   `-- predictions.py
 |-- results
-|   |-- 2020_2030
+|   |-- 2022_2032
 |   |-- 2040_2050
 |   |-- feature_importance
 |   |-- pickle_models
 |   `-- prob_subs
 `-- src
     |-- dataprocessing.py
+    |-- evaluation.py
     |-- model_utils.py
     |-- prepare_target.py
     `-- preprocessing.py
@@ -63,12 +69,11 @@ To set up the project using Docker, follow these steps:
 
 * Build the Docker image: `docker build -t crop_dev .`
 * Run the Docker container: `docker run -it  -v  <CODE FOLDER>:/crop -v <DATA FOLDER>:/crop/data -m 16000m  --cpus=4  -w="/crop" crop_dev`
-* Inside the container, run `sh download.sh` to download the necessary data from Google Drive, unpack it, and delete the archived data.
 
 ## Executing program
 The program consists of several steps, including data processing, building models, forecasting, and processing the results. Here's an overview of the notebooks and scripts available for each step:
 
-### Data processing (optional)
+### Data processing
 The data has already been preprocessed and stored in the `data` folder. However, if you need to process data for different time periods, you can use the following notebooks:
 
 1. [data_preprocessing.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/data_processing/data_preprocessing.ipynb): 
@@ -85,11 +90,9 @@ The next step is to build models based on the processed data and store them for 
 
 1. [ml_models_croplands.py](https://github.com/makboard/ArableLandSuitability/blob/main/models/ml_models_croplands.py):
 This script trains Logistic Regression, XGBoost, and LightGBM classification models using RandomizedSearchCV and CalibratedClassifierCV in a pipeline. It saves the models with the best parameters in the `results` folder.
-2. [nn_linear_pl.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/models/nn_linear_pl.ipynb):
-This notebook trains an MLP classification model using a predefined LightningDataModule and LightningModule. It is used to tune the hyperparameters of the MLP nn.Module using a validation dataset and saves the final model in the `results` folder.
-3. [nn_lstm_pl.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/models/nn_lstm_pl.ipynb):
-This notebook trains an LSTM classification model using a predefined LightningDataModule and LightningModule. It is used to tune the hyperparameters of the LSTM nn.Module using a validation dataset and saves the final model in the `results` folder.
-4. [models_test_metrics.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/models/models_test_metrics.ipynb):
+2. [lstm_pl.py](https://github.com/makboard/ArableLandSuitability/blob/main/models/lstm_pl.py):
+This py file trains an LSTM classification model using a predefined LightningDataModule and LightningModule. It is used to tune the hyperparameters of the LSTM nn.Module using a validation dataset and saves the final model in the `results` folder. The same structure is organized for other neural networks.
+3. [models_test_metrics.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/models/models_test_metrics.ipynb):
 This notebook evaluates all the final models on the test set using various metrics to select the best model for further experiments. It includes a classification report (Sklearn), confusion matrix, precision-recall curve, ROC curve, OvR ROC AUC scores and plots, and OvO ROC AUC scores and plots.
 
 ### Forecasting and processing results
@@ -101,11 +104,11 @@ This script generates predictions based on different future climate scenarios an
 This notebook reshapes the predicted array based on the initial latitude and longitude of the area and filters it using a water map and mountain map, as cropland cannot occur in those areas. It plots heatmaps of the probabilities difference between the initial GFSAD map and the predicted future cropland probabilities by a model and stores the plots in the `results` folder.
 3. [plot_predicted_croplands.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/data_processing/plot_predicted_croplands.ipynb):
 This notebook collects cropland class distributions in different time periods and climate scenarios and plots curves for each class and climate scenario to visualize the difference in forecasts.
-4. [feature_importances_lstm.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/models/feature_importance/feature_importances_lstm.ipynb):
-This notebook computes global feature importance for the LSTM model using Permutation Feature Importance and stores a plot of the top 10 local specific feature importance in the `results` folder.
-5. [feature_analysis_local_lstm.ipynb](https://github.com/makboard/ArableLandSuitability/blob/main/data_processing/feature_analysis_local_lstm.ipynb):
-This notebook computes local feature importance for the LSTM model using Integrated Gradients for selected areas of interest and stores a plot of the top 10 local specific feature importance in the `results` folder.
+4. [feature_importances_lstm.py](https://github.com/makboard/ArableLandSuitability/blob/main/models/feature_importance/feature_importance.py):
+This script computes global feature importance using Permutation Feature Importance and stores a plot of the top feature importance in the `results` folder.
+5. [feature_analysis_local_lstm.py](https://github.com/makboard/ArableLandSuitability/blob/main/data_processing/feature_analysis_local_lstm.py):
+This script computes local feature importance for the LSTM model using Integrated Gradients for selected areas of interest and stores a plot of the top 10 local specific feature importance in the `results` folder.
 
-[src](https://github.com/makboard/ArableLandSuitability/blob/main/src) folder contains `preprocessing.py`, `dataprocessing.py`, `prepare_target.py` and `model_utils.py` modules for processing data, auxiliary procedures, building models, and plotting results.
+[src](https://github.com/makboard/ArableLandSuitability/blob/main/src) folder contains `preprocessing.py`, `evaluation.py`, `dataprocessing.py`, `prepare_target.py` and `model_utils.py` modules for processing data, auxiliary procedures, building models, and plotting results.
 
 Please note that you should follow the instructions in the readme file regarding the organization of the project directory and the necessary dependencies.
