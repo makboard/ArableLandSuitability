@@ -11,9 +11,12 @@ import seaborn as sns
 import xgboost as xgb
 from sklearn import preprocessing
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.svm import LinearSVC
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from src.model_utils import roc_auc_score_multiclass
+
 
 # Constants
 DATA_PATH = os.path.join("..", "data", "processed_files", "pkls")
@@ -144,7 +147,7 @@ def main():
         le,
     )
 
-    # LightGBM
+    # # LightGBM
     lgbm = lgb.LGBMClassifier(boosting_type="gbdt", seed=500, n_jobs=-1)
     param_grid_lgbm = {
         calib_prefix + "objective": ["softmax", "multiclass_ova"],
@@ -155,7 +158,7 @@ def main():
         calib_prefix + "subsample": [0.7, 0.75],
         calib_prefix + "reg_alpha": [1, 2, 6],
         calib_prefix + "reg_lambda": [1, 2, 6],
-        calib_prefix + "num_class": len(np.unique(y_train)),
+        # calib_prefix + "num_class": len(np.unique(y_train)),
     }
     run_classifier(
         lgbm,
@@ -184,6 +187,28 @@ def main():
         y_test,
         target_names,
         "Logistic_Regression",
+        le,
+    )
+
+    # LinearSVC
+    SVC = LinearSVC(max_iter=1000000)
+    param_grid_svc = {
+        calib_prefix + "penalty": ["l2", "l1"],
+        calib_prefix + "C": [0.01, 0.1, 3, 5, 10],
+        calib_prefix + "loss": ["hinge", "squared_hinge"],
+        # calib_prefix + "tol": [1e-3, 1e-4, 1e-5],
+        calib_prefix + "multi_class": ["ovr", "crammer_singer"],
+        calib_prefix + "class_weight": [None, "balanced"],
+    }
+    run_classifier(
+        SVC,
+        param_grid_svc,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        target_names,
+        "LinearSVC",
         le,
     )
 
