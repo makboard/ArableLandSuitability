@@ -3,7 +3,7 @@ import os
 import pickle
 import sys
 
-sys.path.append(os.path.join("/ArableLandSuitability"))
+sys.path.append(os.path.join("..", ".."))
 from src.model_utils import (CropLSTM,
                             CropMLP,
                             CropConvLSTM,
@@ -27,12 +27,12 @@ NUM_PERMUTATION = 10
 sklearn_binary_metric = f1_score
 
 # defining paths
-path_to_npys_data = os.path.join("/ArableLandSuitability", "data", "npys_data")
-path_to_pkls = os.path.join("/app/ArableLandSuitability", "data", "processed_files", "pkls")
-pathResults = os.path.join("/ArableLandSuitability", "results", "feature_importance")
+path_to_npys_data = os.path.join("..", "..", "data", "npys_data")
+path_to_pkls = os.path.join("..", "..", "data", "processed_files", "pkls")
+pathResults = os.path.join("..", "..", "results", "feature_importance")
 if not os.path.exists(pathResults):
     os.makedirs(pathResults)
-path_to_pickled_models = os.path.join("/app/ArableLandSuitability", "results", "pickle_models")
+path_to_pickled_models = os.path.join("..", "..", "results", "pickle_models")
 
 clf_dict = {
     # xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
@@ -40,8 +40,8 @@ clf_dict = {
     # "lr": os.path.join(path_to_pickled_models, "logreg.pkl"),
     # "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
     # "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
-    # "mlp": os.path.join(path_to_pickled_models,  "MLP.ckpt"),
-    # "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
+    "mlp": os.path.join(path_to_pickled_models,  "MLP.ckpt"),
+    "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
 }
 
 with open(
