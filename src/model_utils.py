@@ -3,6 +3,7 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
@@ -682,42 +683,47 @@ class CropConvLSTM(nn.Module):
 
 class CropTransformer(nn.Module):
     """
-    Crop Transformer classifier.
+    Crop Transformer for Multiclass Classification.
 
-    This module applies the Transformer encoder on input sequences and then
-    uses a feed-forward neural network for classification.
+    This module applies a Transformer encoder architecture on input sequences
+    and then uses a feed-forward neural network for classification. It is designed
+    to handle sequences with a fixed length and a set number of features per sequence
+    element. Positional encoding is added to input sequences to retain sequential
+    information. The final classifier predicts the class of the sequence.
 
-    Args:
-        d_model (int): Number of expected features in the input. Default: 52.
-        nhead (int): Number of heads in the multi-head attention mechanism. Default: 4.
-        dim_feedforward (int): Dimension of the feedforward network. Default: 256.
-        hidden_size (int): Number of features in the hidden state. Default: 128.
-        num_layers (int): Number of Transformer encoder layers. Default: 2.
-        dropout (float): Dropout rate. Default: 0.2.
-        activation (str): Activation function for feed-forward networks ("relu" or "gelu"). Default: "relu".
-        output_size (int): Number of output logits. Default: 4.
+    Parameters:
+    - d_model (int): The number of expected features in the input (required).
+    - nhead (int): The number of heads in the multiheadattention models (required).
+    - dim_feedforward (int): The dimension of the feedforward network model (required).
+    - hidden_size (int): The size of the hidden layer in the classifier.
+    - num_layers (int): The number of sub-encoder-layers in the encoder.
+    - dropout (float): The dropout value (default=0.1).
+    - activation (str): The activation function of the encoder layers (default='relu').
+    - output_size (int): The number of classes for classification.
 
-    Inputs:
-        X (torch.Tensor): Tensor of shape (batch_size, sequence_length, d_model)
-                          representing the input sequence.
-
-    Outputs:
-        out (torch.Tensor): Tensor of shape (batch_size, output_size)
-                            representing the output logits.
+    Input:
+    - X (Tensor): The input data tensor with shape (batch_size, sequence_length, num_features).
     """
 
     def __init__(
         self,
         d_model: int = 52,
-        nhead: int = 4,
-        dim_feedforward: int = 256,
-        hidden_size: int = 128,
-        num_layers: int = 2,
-        dropout: float = 0.2,
+        nhead: int = 13,
+        dim_feedforward: int = 2048,
+        hidden_size: int = 512,
+        num_layers: int = 6,
+        dropout: float = 0.1,
         activation: str = "relu",
         output_size: int = 4,
     ) -> None:
         super(CropTransformer, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.nhead = nhead
+        
+        self.d_model = d_model
+
+        # Positional encoding
+        self.positional_encoding = self._generate_positional_encoding(12, d_model).to(self.device)
 
         # Define the Transformer encoder
         self.transformer_enc = nn.TransformerEncoder(
@@ -731,6 +737,7 @@ class CropTransformer(nn.Module):
             ),
             num_layers=num_layers,
         )
+
         # Define the classifier
         self.classifier = nn.Sequential(
             nn.Linear(d_model, hidden_size),
@@ -743,14 +750,28 @@ class CropTransformer(nn.Module):
             nn.Linear(hidden_size // 2, output_size),
         )
 
+    def _generate_positional_encoding(self, length, d_model):
+        """Generate positional encoding."""
+        pe = torch.zeros(length, d_model)
+        position = torch.arange(0, length, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        return pe
+
     def forward(self, X):
-        """Forward pass for Crop Transformer."""
+        # Add positional encoding to input
+        X = X + self.positional_encoding
+
         # Apply Transformer encoder
         encoded = self.transformer_enc(X)
-
-        # Use encoding of the last time step for classification
-        output = encoded[:, -1, :]
-        output = self.classifier(output)
+        
+        # Pooling method: using mean pooling here
+        pooled = torch.mean(encoded, dim=1)
+        output = self.classifier(pooled)
         return output
 
 
@@ -1061,7 +1082,7 @@ class CropPL(pl.LightningModule):
         if scheduler is not None:
             scheduler = scheduler(
                 optimizer=optimizer,
-                patience=25,
+                patience=50,
                 mode="min",
                 factor=0.1,
                 verbose=True,
@@ -1077,6 +1098,7 @@ class CropPL(pl.LightningModule):
                 },
             }
         return {"optimizer": optimizer}
+
 
 class CroplandDataModuleMLP(pl.LightningDataModule):
     """
