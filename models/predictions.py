@@ -34,8 +34,8 @@ logging.info("Importing modules and configuring logging completed.")
 # defining paths
 path_to_npys_data = os.path.join("..", "data", "npys_data")
 
-pathFeatures = os.path.join(path_to_npys_data, "2040_2050")
-pathResults = os.path.join("..", "data", "results", "2040_2050")
+pathFeatures = os.path.join(path_to_npys_data, "2022_2032")
+pathResults = os.path.join("..", "data", "results", "2022_2032")
 pathMorf = os.path.join(path_to_npys_data, "features_morf_data.npy")
 
 softmax = nn.Softmax(dim=1)
@@ -86,12 +86,12 @@ path_to_pickled_models = os.path.join("..", "results", "pickle_models")
 clf_dict = {
     "lr": os.path.join(path_to_pickled_models, "Logistic_Regression.pkl"),
     "lgbm": os.path.join(path_to_pickled_models, "LightGBM.pkl"),
-    # "xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
-    # "mlp": os.path.join(path_to_pickled_models, "MLP.ckpt"),
-    # "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
-    # "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
-    # "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
-    # "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
+    "xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
+    "mlp": os.path.join(path_to_pickled_models, "MLP.ckpt"),
+    "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
+    "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
+    "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
+    "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
 }
 
 logging.info("Model paths configured.")
@@ -217,7 +217,6 @@ else:
         x for x in glob.glob(os.path.join(pathFeatures, "*.npy")) if "AVG" not in x
     ]
 
-# %%
 for path in tqdm(paths):  # [os.path.join(pathFeatures, "features_ssp245_AVG.npy")]
     # Loading Features
     X = pd.DataFrame.from_dict(np.load(path, allow_pickle=True), orient="columns")
