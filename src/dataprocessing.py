@@ -226,24 +226,25 @@ def get_target_data(path_to_raw_data: str, path_to_processed_data: str) -> None:
     None
     """
     
-    with gdal.Open(path_to_raw_data) as dataset:
-        # Save raster to np array
-        np_data = dataset_to_np(
-            dataset,
-            x_off=0,
-            y_off=0,
-            xsize=dataset.RasterXSize,
-            ysize=dataset.RasterYSize,
-        )
+    dataset = gdal.Open(path_to_raw_data)
+    # Save raster to np array
+    np_data = dataset_to_np(
+        dataset,
+        x_off=0,
+        y_off=0,
+        xsize=dataset.RasterXSize,
+        ysize=dataset.RasterYSize,
+    )
 
-        # Reshape data
-        reshaped_data = np_data[0, :, :].reshape(-1)
+    # Reshape data
+    reshaped_data = np_data[0, :, :].reshape(-1)
 
-        # Create and save the target dictionary
-        target_dict = {"Target": reshaped_data}
-        
-        with open(path_to_processed_data, "wb") as f:
-            pickle.dump(target_dict, f, protocol=4)
+    # Create and save the target dictionary
+    target_dict = {"Target": reshaped_data}
+    
+    with open(path_to_processed_data, "wb") as f:
+        pickle.dump(target_dict, f, protocol=4)
+    dataset = None
 
 
 def get_features_data(path_to_raw_data: Dict[str, str], path_to_processed_data_folder: str) -> None:
