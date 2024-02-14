@@ -1,4 +1,3 @@
-# %%
 import os
 import pickle
 import sys
@@ -24,19 +23,25 @@ from tqdm import tqdm
 import glob
 from catboost import CatBoostClassifier
 
-# %% [markdown]
-# ## Paths to data
+import logging
 
-# %%
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.info("Importing modules and configuring logging completed.")
+
+# ## Paths to data
 # defining paths
 path_to_npys_data = os.path.join("..", "data", "npys_data")
 
-pathFeatures = os.path.join(path_to_npys_data, "2022_2032")
-pathResults = os.path.join("..", "results", "2022_2032")
+pathFeatures = os.path.join(path_to_npys_data, "2040_2050")
+pathResults = os.path.join("..", "data", "results", "2040_2050")
 pathMorf = os.path.join(path_to_npys_data, "features_morf_data.npy")
 
 softmax = nn.Softmax(dim=1)
 
+# Loading data
+logging.info("Loading datasets...")
 with open(
     os.path.join("..", "data", "processed_files", "pkls", "X_down_lstm.pkl"), "rb"
 ) as fp:
@@ -73,22 +78,24 @@ test_loader_lstm = DataLoader(
     ),
     batch_size=8192,
 )
-# %%
+
+logging.info("DataLoader preparation completed.")
+
 path_to_pickled_models = os.path.join("..", "results", "pickle_models")
 
 clf_dict = {
     "lr": os.path.join(path_to_pickled_models, "Logistic_Regression.pkl"),
     "lgbm": os.path.join(path_to_pickled_models, "LightGBM.pkl"),
-    "xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
-    "mlp": os.path.join(path_to_pickled_models, "MLP.ckpt"),
-    "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
-    "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
-    "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
-    "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
+    # "xgboost": os.path.join(path_to_pickled_models, "XGBoost.pkl"),
+    # "mlp": os.path.join(path_to_pickled_models, "MLP.ckpt"),
+    # "lstm": os.path.join(path_to_pickled_models, "LSTM.ckpt"),
+    # "transformer": os.path.join(path_to_pickled_models, "transformer.ckpt"),
+    # "conv_lstm": os.path.join(path_to_pickled_models, "conv_lstm.ckpt"),
+    # "catboost": os.path.join(path_to_pickled_models, "catboost.pkl"),
 }
 
+logging.info("Model paths configured.")
 
-# %%
 def make_predictions(X, clf_dict):
     """Generates predictions using different models based on provided dataset
 
@@ -100,11 +107,13 @@ def make_predictions(X, clf_dict):
         keys - model name
         values - array of probabilities
     """
+    logging.info("Starting predictions...")
     y_probs = dict()
     softmax = nn.Softmax(dim=1)
     # create an instance of pl.Trainer
     trainer = pl.Trainer(accelerator="gpu", devices=[3])
     for model in tqdm(clf_dict):
+        logging.info(f"Processing model: {model}")
         if model == "mlp":
             network = CropMLP()
             checkpoint = torch.load(clf_dict[model])
@@ -198,10 +207,8 @@ def make_predictions(X, clf_dict):
 
     return y_probs
 
-
-# %% [markdown]
-# ## Predictions of the models
-
+## Predictions of the models
+logging.info("Starting the prediction process for multiple models...")
 use_avg = True
 if use_avg:
     paths = [x for x in glob.glob(os.path.join(pathFeatures, "*.npy")) if "AVG" in x]
@@ -249,3 +256,4 @@ for path in tqdm(paths):  # [os.path.join(pathFeatures, "features_ssp245_AVG.npy
             "wb",
         ) as f:
             pickle.dump(probabilities[model], f, protocol=4)
+    logging.info("All predictions completed.")
