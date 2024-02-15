@@ -1,6 +1,10 @@
 # ArableLandSuitability
 This repository contains machine learning models for estimating cropland types (irrigated, non-irrigated, no crop) to assess climate change impact on agricultural land suitability across various carbon emission scenarios.
 
+The methodology consists of a three-stage workflow: data acquisition and preprocessing, training of machine learning models, and result evaluation through the prediction of cropland distribution based on different climate models and SSP scenarios. This workflow yields robust results, leverages historical data, and is capable of simulating the distribution of cropland types under future climate projections. For details, see https://ieeexplore.ieee.org/document/10415007
+
+![](workflow.png "Workflow")
+
 ## Dependencies
 
 * Dependencies are listed in requirements.txt file.
@@ -112,3 +116,26 @@ This script computes local feature importance for the LSTM model using Integrate
 [src](https://github.com/makboard/ArableLandSuitability/blob/main/src) folder contains `preprocessing.py`, `evaluation.py`, `dataprocessing.py`, `prepare_target.py` and `model_utils.py` modules for processing data, auxiliary procedures, building models, and plotting results.
 
 Please note that you should follow the instructions in the readme file regarding the organization of the project directory and the necessary dependencies.
+
+
+## Contributing
+
+Please let us know if you encounter a bug or have any suggestions by [filing an issue](https://github.com/makboard/ArableLandSuitability/issues).
+
+We welcome all contributions from bug fixes to new features and extensions.
+
+We expect all contributions discussed in the issue tracker and going through PRs.
+
+
+## Cite
+If you find this work usefull, please cite the following paper:
+
+```bibtex
+@article{shevchenko2024climate,
+  title={Climate Change Impact on Agricultural Land Suitability: An Interpretable Machine Learning-Based Eurasia Case Study},
+  author={Shevchenko, Valeriy and Lukashevich, Aleksandr and Taniushkina, Daria and Bulkin, Aleksandr and Grinis, Roland and Kovalev, Kirill and Narozhnaia, Veronika and Sotiriadi, Nazar and Krenke, Alexander and Maximov, Yury},
+  journal={IEEE Access},
+  year={2024},
+  publisher={IEEE}
+}
+```
