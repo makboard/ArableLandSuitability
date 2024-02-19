@@ -708,11 +708,11 @@ class CropTransformer(nn.Module):
     def __init__(
         self,
         d_model: int = 52,
-        nhead: int = 13,
-        dim_feedforward: int = 2048,
-        hidden_size: int = 512,
-        num_layers: int = 6,
-        dropout: float = 0.1,
+        nhead: int = 4,
+        dim_feedforward: int = 256,
+        hidden_size: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.2,
         activation: str = "relu",
         output_size: int = 4,
     ) -> None:
@@ -763,15 +763,12 @@ class CropTransformer(nn.Module):
         return pe
 
     def forward(self, X):
-        # Add positional encoding to input
-        X = X + self.positional_encoding
-
         # Apply Transformer encoder
         encoded = self.transformer_enc(X)
-        
-        # Pooling method: using mean pooling here
-        pooled = torch.mean(encoded, dim=1)
-        output = self.classifier(pooled)
+
+        # Use encoding of the last time step for classification
+        output = encoded[:, -1, :]
+        output = self.classifier(output)
         return output
 
 

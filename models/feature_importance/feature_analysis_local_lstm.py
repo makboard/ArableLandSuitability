@@ -370,17 +370,17 @@ ru_bl = (60, 55)
 ru_tr = (70, 60)
 if data_type == "sequential":
     clf_dict = {
-        # "mlp": "/app/ArableLandSuitability/results/pickle_models/MLP.ckpt",
-        "lstm": "/app/ArableLandSuitability/results/pickle_models/LSTM.ckpt",
-        "transformer": "/app/ArableLandSuitability/results/pickle_models/transformer.ckpt",
-        "conv_lstm": "/app/ArableLandSuitability/results/pickle_models/conv_lstm.ckpt",
+        # "mlp": "/app/ArableLandSuitability/data/results/pickle_models/MLP.ckpt",
+        "lstm": "/app/ArableLandSuitability/data/results/pickle_models/LSTM.ckpt",
+        "transformer": "/app/ArableLandSuitability/data/results/pickle_models/transformer.ckpt",
+        "conv_lstm": "/app/ArableLandSuitability/data/results/pickle_models/conv_lstm.ckpt",
     }
 elif data_type == "mlp":
     clf_dict = {
-        "mlp": "/app/ArableLandSuitability/results/pickle_models/MLP.ckpt",
-        # "lstm": "/app/ArableLandSuitability/results/pickle_models/LSTM.ckpt",
-        # "transformer": "/app/ArableLandSuitability/results/pickle_models/transformer.ckpt",
-        # "conv_lstm": "/app/ArableLandSuitability/results/pickle_models/conv_lstm.ckpt",
+        "mlp": "/app/ArableLandSuitability/data/results/pickle_models/MLP.ckpt",
+        # "lstm": "/app/ArableLandSuitability/data/results/pickle_models/LSTM.ckpt",
+        # "transformer": "/app/ArableLandSuitability/data/results/pickle_models/transformer.ckpt",
+        # "conv_lstm": "/app/ArableLandSuitability/data/results/pickle_models/conv_lstm.ckpt",
     }
 else:
     raise NotImplementedError("type should be `mlp` or `sequential`")
