@@ -11,7 +11,7 @@ The methodology consists of a three-stage workflow: data acquisition and preproc
 
 ## Data
 
-The data required for the project is available in the `data` folder. The folder contains various files in the formats of .tif and .npy. The data has been preprocessed and stored in these files.
+The data required for the project is available in the `data` folder. The folder contains various files in the formats of .tif and .npy. The data has been preprocessed and stored in these files. You can access the data folders through the [Cloud Folder](https://cloud.iccda.io/s/QsTdXDyoBYYkCKD).
 
 The project directory structure should be organized as follows (tree depth is limited by 2):
 ``` bash
