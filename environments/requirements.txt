@@ -116,7 +116,7 @@ pyperclip==1.8.2
 pyproj==3.4.0
 PyQt5-sip==12.11.0
 python-version==0.0.2
-pytorch-lightning==1.9.5
+pytorch-lightning==2.6.1
 regex==2023.8.8
 requests-oauthlib==1.3.0
 rich==13.5.2
@@ -267,7 +267,7 @@ pyperclip==1.8.2
 pyproj==3.4.0
 PyQt5-sip==12.11.0
 python-version==0.0.2
-pytorch-lightning==1.9.5
+pytorch-lightning==2.6.1
 regex==2023.8.8
 requests-oauthlib==1.3.0
 rich==13.5.2
